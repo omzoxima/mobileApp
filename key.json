@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "tuktuki-project",
+  "private_key_id": "45fefa6e1686458e71f1cde38ab7aed3dc2824de",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDCpQdE2RWHxA/6\nO9mMpFs2sNi0bW7ErFkrISct7xV9nLB107MnDiCUKMzh6uxIyi18piCb/BlQ5jZD\n/0yuCyb7ix5ukwGjqgkqbjR8knkztBloH8eJuSi6thQwtyaNVHc99DKFDU8gY0eT\nuLnr4zt0z7suoCFbbGvE1DqNo9luYaRbEuFs8S/ok6OPFTJ1Cvk9M9dp6LycxnzQ\nLG/nPBuMweJiPQpXl90MH6J2x1YmV5A7GoKoVFI3zLNz08W2p4+P/H8M3cp8TphO\nLlGqtmHJKHwZGIC8lhBeoLCyeefkjInwOJduBcDK28I1lmQGmpWa0QgTjZzRGBg5\nE9DcunQtAgMBAAECggEAFqeWPCqsyVkGEmDIljMuVKQVDOcBx01XXDWRyv8H+CSh\nGzhbzTYP5P6yCLIgSevnixmw3kbjfBmCA7xhZI5yvUCjdvOQSMgfz1BKtpxmaUtT\nJl3bNR9Ca3zexmQYI3H10QBXqEnKGwxtxnaag9HhAocHvnUFJ5AWeQR0mOC9trgy\n1CRubNCxEeC7QoxHTY0UQczWECKtYnZljqd95X9ZHNj8uf0W+MCihssxDCBsJQMT\nsAWHfa53vMIzqeLiwum1E3VR1WRv+Bjd6+BqZfABuEWpgU2Vg4F/d5lPGi4b+Rhf\nHNPnhJ1BeXRpnV0qIuEnOdfj0Fr/D0JG8Wql4FQLVwKBgQDy6L9j+dg5ZBsAGMdS\nimTouQXJiBvU79aNpPgZgJN/Y2NuucO5K6/IOBP7uYvuvKv2j4Tiu1mvoxF9orrR\nggKVEK3WVzWYEOePf+DJYhkCYHKjDbfcr9FObCMaBaIrDvoYbydi7C3aB8klmQS7\nE6nh5xKSvTrGjCZw+MLEzEnLswKBgQDNImhvhNvUThM2LsilnAvmyuEWAqpnPjE6\nIy0R3RUpC50O0vDRqo7IO41r4mWH8+Em3WvbdNS69hVeorPyPOVfL9OQK07paU92\nahxvI9WxyA5t3hsdEaPinawCHz2Rk/y/Vlqyxn64cLpuxjy18Pp2+omjhq47nDsv\nWNR/NU9QnwKBgQDLFk8V/kiKSyjL3uufFfgiHrc49KQYVuFyEXAgmkA3bFgwtf1u\nrpjL9B65Ajt9QZ8giIOYsPzd/J9eBBTfnywbhxNgNg+n8NI5RrgghvTT6OFPc+O6\nDgEX6Q877WPVTjNJBH3QlhgLxyCkX5f19Q2+wlvj9XPTlk95enIU6Zv1QwKBgQCR\ni18z+L0MVlT1NZ5xOlWLa9jmCAAlfo/o4vpgWU9hLvdBhFMPQAdMdEx0Bk7pdhUC\nwUl8jNk+yckBu0kXjzNjJQjjmobDv099Ae6owHEnUX1DYLo2FsUDzcE0RDwn5SsI\nCtoRTBqu/HSakhaTNKZQ8pPjrXRDoSaxAkLK+uUKmwKBgQCVt/sRNCXl/rtBWGkp\nQr2W24eSbY0usV/VHwBn+r5msifBDhoblZZm5Scmyz+J4MQ9ABZBZxUv+739FuQD\nAqb+23GShxz90r+qoFHb4jFuFet1md/8eKFA/d9jsKHbc8o78LxnkbcubYcmY41X\nIHXn7LiLWHmUW17io9QbOnS3aA==\n-----END PRIVATE KEY-----\n",
+  "client_email": "tuktukidemo@tuktuki-project.iam.gserviceaccount.com",
+  "client_id": "104575157964598313973",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/tuktukidemo%40tuktuki-project.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}

@@ -95,7 +95,7 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v3
       with:
-        node-version: '18'
+        node-version: '22'
     - name: Build Docker image
       run: |
         docker build -t gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA .
@@ -128,7 +128,7 @@ jobs:
 Add a `Dockerfile` to your project root:
 
 ```Dockerfile
-FROM node:18-alpine
+FROM node:22-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --production
