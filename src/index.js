@@ -30,7 +30,7 @@ const PORT = process.env.PORT || 8080;
 // Only create tables if they do not exist (no force, no alter)
 sequelize.sync()
   .then(() => {
-    app.listen(PORT, '0.0.0.0', () => {
+    app.listen(PORT, () => {
       console.log(`Server is running on port ${PORT}`);
       console.log('Database synced successfully');
     });

@@ -1,0 +1,8 @@
+{
+    "appService.zipIgnorePattern": [
+        "node_modules{,/**}",
+        ".vscode{,/**}"
+    ],
+    "appService.defaultWebAppToDeploy": "/subscriptions/e67f881c-302f-423f-84b7-2f3853b2efae/resourceGroups/NewResourceforchat/providers/Microsoft.Web/sites/voicechatzoxima",
+    "appService.deploySubpath": "."
+}
