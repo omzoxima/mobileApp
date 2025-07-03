@@ -25,7 +25,7 @@ app.use((err, req, res, next) => {
 });
 
 // Database sync and server start
-const PORT = config.PORT;
+const PORT = process.env.PORT || config.PORT || 8080;
 
 // Only create tables if they do not exist (no force, no alter)
 sequelize.sync()
