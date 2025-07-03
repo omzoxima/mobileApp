@@ -20,11 +20,15 @@ const sequelize = new Sequelize(
   {
     host: config.DB_HOST,
     port: config.DB_PORT,
-    dialect: 'postgres',
-    dialectOptions: config.DB_HOST && config.DB_HOST.startsWith('/cloudsql/')
-      ? { socketPath: config.DB_HOST }
-      : {},
-    logging: false
+    dialect: 'postgres', // Explicitly set the dialect here
+    dialectOptions: config.DB_DIALECT_OPTIONS || {}, // Ensure this is an object
+    pool: {
+      max: 5,
+      min: 0,
+      acquire: 30000,
+      idle: 10000
+    },
+    logging: console.log
   }
 );
 
