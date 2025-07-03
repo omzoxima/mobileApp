@@ -14,7 +14,7 @@ const config = {
   DB_USER: process.env.DB_USER,
   DB_PASSWORD: process.env.DB_PASSWORD,
  // DB_SOCKET_PATH: process.env.DB_SOCKET_PATH, // Optional, for Cloud Run socket
-  PORT: process.env.PORT || 3000,
+  PORT: process.env.PORT || 8080,
   JWT_SECRET: process.env.JWT_SECRET || 'secret-key',
 };
 
