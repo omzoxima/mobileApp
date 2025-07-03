@@ -14,9 +14,6 @@ const config = {
   DB_NAME: process.env.DB_NAME,
   DB_USER: process.env.DB_USER,
   DB_PASSWORD: process.env.DB_PASSWORD,
-  AZURE_STORAGE_CONNECTION_STRING: process.env.AZURE_STORAGE_CONNECTION_STRING,
-  AZURE_STORAGE_CONTAINER_NAME: process.env.AZURE_STORAGE_CONTAINER_NAME,
-  AZURE_CDN_ENDPOINT: process.env.AZURE_CDN_ENDPOINT,
   JWT_SECRET: process.env.JWT_SECRET || 'secret-key',
 };
 
