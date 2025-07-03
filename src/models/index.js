@@ -21,6 +21,9 @@ const sequelize = new Sequelize(
     host: config.DB_HOST,
     port: config.DB_PORT,
     dialect: 'postgres',
+    dialectOptions: config.DB_HOST && config.DB_HOST.startsWith('/cloudsql/')
+      ? { socketPath: config.DB_HOST }
+      : {},
     logging: false
   }
 );
