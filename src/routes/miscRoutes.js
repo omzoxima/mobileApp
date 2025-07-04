@@ -26,8 +26,19 @@ router.get('/search', async (req, res) => {
 // GET /api/profile
 router.get('/profile', userContext, async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    res.json(req.user);
+    if (req.user) {
+      return res.json(req.user);
+    }
+    if (req.guestDeviceId) {
+      // Look up guest user by device_id
+      const guestUser = await User.findOne({ where: { device_id: req.guestDeviceId, login_type: 'guest' } });
+      if (guestUser) {
+        return res.json(guestUser);
+      } else {
+        return res.status(404).json({ error: 'Guest user not found for provided device_id' });
+      }
+    }
+    return res.status(401).json({ error: 'Unauthorized' });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Failed to get profile' });
   }
