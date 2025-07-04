@@ -1,4 +1,5 @@
 import { Storage } from '@google-cloud/storage';
+import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
 const storage = new Storage(); // On GCP, credentials are handled automatically
