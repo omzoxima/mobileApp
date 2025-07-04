@@ -27,6 +27,7 @@ router.post('/upload-multilingual', upload.fields([
   try {
     const { title, episode_number, series_id, series_title, category, reward_cost_points, episode_description, video_languages } = req.body;
     if (!title) {
+      console.log('Episode title is required.');
       return res.status(400).json({ error: 'Episode title is required.' });
     }
     const thumbnailFile = req.files.thumbnail?.[0];
