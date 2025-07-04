@@ -2,8 +2,11 @@ import express from 'express';
 import multer from 'multer';
 import models from '../models/index.js';
 import userContext from '../middlewares/userContext.js';
-import { uploadToGCS } from '../services/gcsStorage.js';
+import { uploadToGCS, uploadHLSFolderToGCS, getSignedUrl } from '../services/gcsStorage.js';
 import path from 'path';
+import ffmpeg from 'fluent-ffmpeg';
+import fs from 'fs/promises';
+import { v4 as uuidv4 } from 'uuid';
 
 const { Series, Episode, Category, EpisodeBundlePrice } = models;
 
@@ -103,14 +106,51 @@ router.post('/upload-multilingual', upload.fields([
     if (!Array.isArray(languages) || languages.length !== (req.files.videos || []).length) {
       return res.status(400).json({ error: 'video_languages array length must match number of video files.' });
     }
-    // Upload videos per language
+    // Upload videos per language as HLS
     const subtitlesArr = [];
     for (let i = 0; i < (req.files.videos || []).length; i++) {
       const file = req.files.videos[i];
       const lang = languages[i];
-      const videoUrl = await uploadToGCS(file, 'videos');
-      subtitlesArr.push({ language: lang, videoUrl });
+      const hlsId = uuidv4();
+      const hlsDir = path.join('tmp', hlsId);
+      await fs.mkdir(hlsDir, { recursive: true });
+
+      // 1. Transcode to HLS
+      const hlsPlaylist = path.join(hlsDir, 'index.m3u8');
+      await new Promise((resolve, reject) => {
+        ffmpeg(file.path)
+          .outputOptions([
+            '-profile:v baseline',
+            '-level 3.0',
+            '-start_number 0',
+            '-hls_time 10',
+            '-hls_list_size 0',
+            '-f hls',
+          ])
+          .output(hlsPlaylist)
+          .on('end', resolve)
+          .on('error', reject)
+          .run();
+      });
+
+      // 2. Upload HLS files to GCS
+      const gcsFolder = `hls/${hlsId}/`;
+      await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+
+      // 3. Store the GCS path for the .m3u8
+      const gcsPath = `${gcsFolder}index.m3u8`;
+
+      // 4. Generate signed URL for .m3u8
+      const signedUrl = await getSignedUrl(gcsPath, 3600);
+
+      // 5. Store both the GCS path and signed URL for this language
+      subtitlesArr.push({ language: lang, gcsPath, videoUrl: signedUrl });
+
+      // 6. Clean up
+      await fs.rm(hlsDir, { recursive: true, force: true });
+      await fs.unlink(file.path);
     }
+
     episode.subtitles = subtitlesArr;
     await episode.save();
     res.status(201).json({ message: 'Upload successful', episode });
@@ -167,6 +207,34 @@ router.get('/episodes/:id', async (req, res) => {
     res.json(episode);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/episodes/:id/hls-url?lang=xx
+router.get('/episodes/:id/hls-url', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lang } = req.query;
+    if (!lang) {
+      return res.status(400).json({ error: 'Language code (lang) is required as a query parameter.' });
+    }
+    const episode = await models.Episode.findByPk(id);
+    if (!episode) {
+      return res.status(404).json({ error: 'Episode not found.' });
+    }
+    if (!Array.isArray(episode.subtitles)) {
+      return res.status(404).json({ error: 'No subtitles/HLS info found for this episode.' });
+    }
+    const subtitle = episode.subtitles.find(s => s.language === lang);
+    if (!subtitle || !subtitle.gcsPath) {
+      return res.status(404).json({ error: 'No HLS video found for the requested language.' });
+    }
+    // Generate a fresh signed URL
+    const signedUrl = await getSignedUrl(subtitle.gcsPath, 3600); // 1 hour expiry
+    return res.json({ signedUrl });
+  } catch (error) {
+    console.error('Error generating HLS signed URL:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate signed URL' });
   }
 });
 
