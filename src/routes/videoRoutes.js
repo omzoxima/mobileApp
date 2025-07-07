@@ -117,10 +117,12 @@ router.post('/upload-multilingual', upload.fields([
       const file = req.files.videos[i];
       const lang = languages[i];
       const hlsId = uuidv4();
-      const hlsDir = path.join('tmp', hlsId);
+      console.log(file.path);
+      const hlsDir = path.join('/tmp', hlsId);
       await fs.mkdir(hlsDir, { recursive: true });
 
       // 1. Transcode to HLS
+      console.log('op');
       const hlsPlaylist = path.join(hlsDir, 'index.m3u8');
       await new Promise((resolve, reject) => {
         ffmpeg(file.path)
