@@ -267,5 +267,17 @@ router.get('/episode-bundles', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// Add this test endpoint
+router.get('/test-ffmpeg', (req, res) => {
+  ffmpeg().getAvailableFormats((err, formats) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({
+      ffmpeg: ffmpegInstaller.path,
+      version: ffmpegInstaller.version,
+      h264: formats.h264 ? 'Available' : 'Missing',
+      aac: formats.aac ? 'Available' : 'Missing'
+    });
+  });
+});
 
 export default router;
