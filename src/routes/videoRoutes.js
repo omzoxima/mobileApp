@@ -7,6 +7,9 @@ import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
+import ffmpegPath from 'ffmpeg-static';
+
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 const { Series, Episode, Category, EpisodeBundlePrice } = models;
 
@@ -104,6 +107,7 @@ router.post('/upload-multilingual', upload.fields([
     } catch (e) {
       return res.status(400).json({ error: 'video_languages must be a JSON array of language codes.' });
     }
+    console.log((req.files.videos || []).length);
     if (!Array.isArray(languages) || languages.length !== (req.files.videos || []).length) {
       return res.status(400).json({ error: 'video_languages array length must match number of video files.' });
     }
