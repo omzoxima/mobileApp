@@ -7,9 +7,9 @@ import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
-import ffmpegPath from 'ffmpeg-static';
+//import ffmpegPath from 'ffmpeg-static';
 
-ffmpeg.setFfmpegPath(ffmpegPath);
+//ffmpeg.setFfmpegPath(ffmpegPath);
 
 const { Series, Episode, Category, EpisodeBundlePrice } = models;
 
