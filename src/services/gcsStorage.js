@@ -1,38 +1,71 @@
 import { Storage } from '@google-cloud/storage';
-import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import fs from 'fs/promises';
+import path from 'path';
+import fs from 'fs/promises'; // Missing import
 
-const storage = new Storage(); // On GCP, credentials are handled automatically
-const bucket = storage.bucket(process.env.GCS_BUCKET_NAME || 'run-sources-tuktuki-464514-asia-south1');
+const storage = new Storage();
+const bucketName = 'run-sources-tuktuki-464514-asia-south1';
 
-// Upload a single file (buffer) to GCS
-export async function uploadToGCS(file, folder = 'uploads') {
-  const ext = path.extname(file.originalname);
-  const filename = `${folder}/${uuidv4()}_${file.originalname}`;
-  const blob = bucket.file(filename);
-  await blob.save(file.buffer, {
-    contentType: file.mimetype
+// Upload single file to GCS
+export async function uploadToGCS(file, folder) {
+  const fileName = `${folder}/${uuidv4()}${path.extname(file.originalname)}`;
+  const fileObj = storage.bucket(bucketName).file(fileName);
+  
+  await fileObj.save(file.buffer, {
+    metadata: {
+      contentType: file.mimetype,
+      // Add cache control for better CDN performance
+      cacheControl: 'public, max-age=31536000'
+    },
+    // Important for public files
+    public: false // Uniform bucket-level access doesn't use this, but good to be explicit
   });
-  return `https://storage.googleapis.com/${bucket.name}/${filename}`;
+  
+  return fileName;
 }
 
-// Upload all files in a local folder to GCS under a given folder
-export async function uploadHLSFolderToGCS(localDir, gcsFolder) {
+// Upload HLS folder to GCS
+export async function uploadHLSFolderToGCS(localDir, gcsPath) {
   const files = await fs.readdir(localDir);
-  for (const file of files) {
-    await bucket.upload(path.join(localDir, file), {
-      destination: `${gcsFolder}${file}`,
-      predefinedAcl: 'private'
+  
+  await Promise.all(files.map(async (file) => {
+    const filePath = path.join(localDir, file);
+    const fileContent = await fs.readFile(filePath);
+    const destination = `${gcsPath}${file}`;
+    
+    const contentType = file.endsWith('.m3u8') ? 'application/x-mpegURL' : 
+                      file.endsWith('.ts') ? 'video/MP2T' : 
+                      'application/octet-stream';
+    
+    await storage.bucket(bucketName).file(destination).save(fileContent, {
+      metadata: {
+        contentType,
+        cacheControl: 'public, max-age=31536000' // Cache for 1 year
+      },
+      resumable: false // Better for small files like HLS segments
     });
+  }));
+}
+
+// Generate v4 signed URL
+export async function getSignedUrl(gcsPath, expiryMinutes = 60) {
+  try {
+    const [url] = await storage
+      .bucket(bucketName)
+      .file(gcsPath)
+      .getSignedUrl({
+        action: 'read',
+        expires: Date.now() + expiryMinutes * 60 * 1000,
+        version: 'v4',
+        // For HLS streaming, it's good to include the response headers
+        extensionHeaders: {
+          'response-content-type': gcsPath.endsWith('.m3u8') ? 
+            'application/x-mpegURL' : 'video/MP2T'
+        }
+      });
+    return url;
+  } catch (error) {
+    console.error('Error generating signed URL:', error);
+    throw new Error('Failed to generate signed URL');
   }
 }
-
-// Generate a signed URL for a GCS object
-export async function getSignedUrl(filePath, expiresInSeconds = 3600) {
-  const [url] = await bucket.file(filePath).getSignedUrl({
-    action: 'read',
-    expires: Date.now() + expiresInSeconds * 1000,
-  });
-  return url;
-} 
