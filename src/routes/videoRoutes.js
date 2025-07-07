@@ -8,6 +8,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import ffmpegPath from 'ffmpeg-static';
+import { Readable } from 'stream';
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -120,11 +121,15 @@ router.post('/upload-multilingual', upload.fields([
       const hlsDir = path.join('/tmp', hlsId);
       await fs.mkdir(hlsDir, { recursive: true });
 
+      console.log('file:', file);
+      console.log('file.buffer type:', typeof file.buffer, 'length:', file.buffer?.length);
+
+      const inputStream = Readable.from(file.buffer);
       // 1. Transcode to HLS
       const hlsPlaylist = path.join(hlsDir, 'index.m3u8');
       await new Promise((resolve, reject) => {
         ffmpeg()
-          .input(file.buffer)
+          .input(inputStream)
           .outputOptions([
             '-profile:v baseline',
             '-level 3.0',
