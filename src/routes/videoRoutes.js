@@ -5,6 +5,7 @@ import userContext from '../middlewares/userContext.js';
 import { uploadToGCS, uploadHLSFolderToGCS, getSignedUrl } from '../services/gcsStorage.js';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from 'ffmpeg-static';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 //import ffmpegPath from 'ffmpeg-static';
@@ -21,6 +22,9 @@ const upload = multer({
   storage,
   limits: { fileSize: 1024 * 1024 * 1024 } // 1GB limit
 });
+
+// Set ffmpeg path if using ffmpeg-static
+ffmpeg.setFfmpegPath(ffmpegInstaller);
 
 // POST /api/videos/upload-multilingual
 router.post('/upload-multilingual', upload.fields([

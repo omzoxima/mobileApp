@@ -5,7 +5,7 @@ import authRoutes from './routes/authRoutes.js';
 import config from './config/index.js';
 import rewardTaskRoutes from './routes/rewardTaskRoutes.js';
 import miscRoutes from './routes/miscRoutes.js';
-import dummyRoutes from './routes/dummy.js';
+//import dummyRoutes from './routes/dummy.js';
 
 const app = express();
 
@@ -18,7 +18,7 @@ app.use('/api', videoRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/reward-tasks', rewardTaskRoutes);
 app.use('/api', miscRoutes);
-app.use('/api', dummyRoutes);
+//app.use('/api', dummyRoutes);
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);
