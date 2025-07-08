@@ -7,32 +7,28 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
-
+ 
 const { Series, Episode, Category } = models;
 const router = express.Router();
-
+ 
 // Configure FFmpeg
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-
-// Configure multer to use disk storage
+ 
+// Configure multer
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, '/tmp/uploads');
-    },
-    filename: function (req, file, cb) {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      cb(null, uniqueSuffix + '-' + file.originalname);
-    }
-  }),
+  storage: multer.memoryStorage(),
   limits: { fileSize: 1024 * 1024 * 1024 } // 1GB
 });
-
-// HLS Conversion Function (from file path)
-async function convertToHLSFromFile(inputPath, outputDir) {
+ 
+// HLS Conversion Function
+async function convertToHLS(videoBuffer, outputDir) {
+  const tempInputPath = path.join(outputDir, 'input.mp4');
+  await fs.writeFile(tempInputPath, videoBuffer);
+ 
   const hlsPlaylist = path.join(outputDir, 'playlist.m3u8');
+  
   await new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
+    ffmpeg(tempInputPath)
       .inputOptions([
         '-re',
         '-analyzeduration 100M',
@@ -58,16 +54,16 @@ async function convertToHLSFromFile(inputPath, outputDir) {
       .on('error', reject)
       .run();
   });
+ 
   return path.basename(hlsPlaylist);
 }
-
+ 
 // Upload Endpoint
 router.post('/upload-multilingual', upload.fields([
   { name: 'thumbnail', maxCount: 1 },
   { name: 'videos', maxCount: 10 }
 ]), async (req, res) => {
   let tempDirs = [];
-  let tempFiles = [];
   
   try {
     // Validate inputs
@@ -75,7 +71,7 @@ router.post('/upload-multilingual', upload.fields([
     if (!title || !episode_number) {
       return res.status(400).json({ error: 'Title and episode number are required' });
     }
-
+ 
     // Parse languages
     let languages;
     try {
@@ -84,7 +80,7 @@ router.post('/upload-multilingual', upload.fields([
     } catch {
       return res.status(400).json({ error: 'Invalid languages format' });
     }
-
+ 
     // Validate files
     const thumbnailFile = req.files.thumbnail?.[0];
     const videoFiles = req.files.videos || [];
@@ -92,16 +88,16 @@ router.post('/upload-multilingual', upload.fields([
     if (videoFiles.length !== languages.length) {
       return res.status(400).json({ error: 'Video and language count mismatch' });
     }
-
+ 
     // Process category
-    const categoryRecord = await Category.findOne({ 
-      where: { name: category } 
+    const categoryRecord = await Category.findOne({
+      where: { name: category }
     }) || await Category.findByPk(category);
     
     if (!categoryRecord) {
       return res.status(400).json({ error: 'Category not found' });
     }
-
+ 
     // Process series
     let series;
     let thumbnailUrl = null;
@@ -130,13 +126,12 @@ router.post('/upload-multilingual', upload.fields([
     } else {
       return res.status(400).json({ error: 'Series ID or title required' });
     }
-
+ 
     // Upload thumbnail if provided
     if (thumbnailFile) {
       thumbnailUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
-      tempFiles.push(thumbnailFile.path);
     }
-
+ 
     // Process videos
     const subtitles = await Promise.all(
       videoFiles.map(async (file, i) => {
@@ -146,16 +141,15 @@ router.post('/upload-multilingual', upload.fields([
         
         await fs.mkdir(hlsDir, { recursive: true });
         tempDirs.push(hlsDir);
-
-        await convertToHLSFromFile(file.path, hlsDir);
+ 
+        await convertToHLS(file.buffer, hlsDir);
         
         const gcsFolder = `hls/${hlsId}/`;
         await uploadHLSFolderToGCS(hlsDir, gcsFolder);
         
         const playlistPath = `${gcsFolder}playlist.m3u8`;
         const signedUrl = await getSignedUrl(playlistPath);
-
-        tempFiles.push(file.path);
+ 
         return {
           language: lang,
           gcsPath: playlistPath,
@@ -163,7 +157,7 @@ router.post('/upload-multilingual', upload.fields([
         };
       })
     );
-
+ 
     // Create episode
     const episode = await Episode.create({
       title,
@@ -174,36 +168,30 @@ router.post('/upload-multilingual', upload.fields([
       reward_cost_points: req.body.reward_cost_points || 0,
       subtitles: JSON.stringify(subtitles)
     });
-
-    res.status(201).json({ 
+ 
+    res.status(201).json({
       success: true,
       episode,
       signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
     });
-
+ 
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: 'Video upload failed',
       details: error.message
     });
   } finally {
-    // Cleanup temp dirs and files
+    // Cleanup
     await Promise.all(
       tempDirs.map(dir =>
         fs.rm(dir, { recursive: true, force: true })
           .catch(e => console.error('Cleanup error:', e))
-      )
-    );
-    await Promise.all(
-      tempFiles.map(file =>
-        fs.rm(file, { force: true })
-          .catch(e => console.error('File cleanup error:', e))
-      )
-    );
+    ));
   }
 });
-
+ 
+ 
 
 
 // GET /api/series (paginated, filter by category)
