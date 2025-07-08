@@ -6,9 +6,9 @@ import config from './config/index.js';
 import rewardTaskRoutes from './routes/rewardTaskRoutes.js';
 import miscRoutes from './routes/miscRoutes.js';
 //import dummyRoutes from './routes/dummy.js';
-
+import cors from 'cors';
 const app = express();
-
+app.use(cors());  
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
