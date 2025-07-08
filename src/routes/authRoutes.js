@@ -4,6 +4,8 @@ import models from '../models/index.js';
 import twilio from 'twilio';
 import nodemailer from 'nodemailer';
 import fetch from 'node-fetch';
+import passport from 'passport';
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 
 const { User } = models;
 
@@ -28,7 +30,48 @@ const transporter = nodemailer.createTransport({
 // Replace with your actual values
 const FACEBOOK_CLIENT_ID = process.env.FACEBOOK_CLIENT_ID;
 const FACEBOOK_CLIENT_SECRET = process.env.FACEBOOK_CLIENT_SECRET;
-const FACEBOOK_REDIRECT_URI = 'http://localhost:3000/api/auth/facebook/callback'; // Must match your Facebook app settings
+const FACEBOOK_REDIRECT_URI = 'http://localhost:8080/api/auth/facebook/callback'; // Must match your Facebook app settings
+
+// Google OAuth2.0 setup
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:8080/api/auth/google/callback';
+
+passport.use(new GoogleStrategy({
+  clientID: GOOGLE_CLIENT_ID,
+  clientSecret: GOOGLE_CLIENT_SECRET,
+  callbackURL: GOOGLE_CALLBACK_URL,
+}, async (accessToken, refreshToken, profile, done) => {
+  try {
+    let user = await User.findOne({ where: { google_id: profile.id } });
+    if (!user) {
+      user = await User.create({
+        google_id: profile.id,
+        Name: profile.displayName,
+        phone_or_email: profile.emails && profile.emails[0] ? profile.emails[0].value : '',
+        login_type: 'google',
+        is_active: true
+      });
+    }
+    return done(null, user);
+  } catch (err) {
+    return done(err, null);
+  }
+}));
+
+// Required for passport (no session storage, just pass user)
+passport.serializeUser((user, done) => done(null, user.id));
+passport.deserializeUser(async (id, done) => {
+  try {
+    const user = await User.findByPk(id);
+    done(null, user);
+  } catch (err) {
+    done(err, null);
+  }
+});
+
+// Express middleware for passport
+router.use(passport.initialize());
 
 // POST /api/auth/request_otp
 router.post('/request_otp', async (req, res) => {
@@ -226,6 +269,19 @@ router.post('/facebook-login', async (req, res) => {
     console.error('Facebook login error:', error);
     res.status(500).json({ error: error.message || 'Failed to login with Facebook' });
   }
+});
+
+// Route: Start Google OAuth2.0 login
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+
+// Route: Google OAuth2.0 callback
+router.get('/google/callback', passport.authenticate('google', { session: false, failureRedirect: '/' }), (req, res) => {
+  // Generate JWT and return to frontend
+  const user = req.user;
+  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  // You can redirect to your frontend with the token, or just return it
+  // res.redirect(`http://your-frontend-url.com?token=${token}`);
+  res.json({ token, user });
 });
 
 export default router;

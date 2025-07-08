@@ -14,21 +14,25 @@ const router = express.Router();
 // Configure FFmpeg
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-// Configure multer
+// Configure multer to use disk storage
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, '/tmp/uploads');
+    },
+    filename: function (req, file, cb) {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      cb(null, uniqueSuffix + '-' + file.originalname);
+    }
+  }),
   limits: { fileSize: 1024 * 1024 * 1024 } // 1GB
 });
 
-// HLS Conversion Function
-async function convertToHLS(videoBuffer, outputDir) {
-  const tempInputPath = path.join(outputDir, 'input.mp4');
-  await fs.writeFile(tempInputPath, videoBuffer);
-
+// HLS Conversion Function (from file path)
+async function convertToHLSFromFile(inputPath, outputDir) {
   const hlsPlaylist = path.join(outputDir, 'playlist.m3u8');
-  
   await new Promise((resolve, reject) => {
-    ffmpeg(tempInputPath)
+    ffmpeg(inputPath)
       .inputOptions([
         '-re',
         '-analyzeduration 100M',
@@ -54,7 +58,6 @@ async function convertToHLS(videoBuffer, outputDir) {
       .on('error', reject)
       .run();
   });
-
   return path.basename(hlsPlaylist);
 }
 
@@ -64,6 +67,7 @@ router.post('/upload-multilingual', upload.fields([
   { name: 'videos', maxCount: 10 }
 ]), async (req, res) => {
   let tempDirs = [];
+  let tempFiles = [];
   
   try {
     // Validate inputs
@@ -130,6 +134,7 @@ router.post('/upload-multilingual', upload.fields([
     // Upload thumbnail if provided
     if (thumbnailFile) {
       thumbnailUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
+      tempFiles.push(thumbnailFile.path);
     }
 
     // Process videos
@@ -142,7 +147,7 @@ router.post('/upload-multilingual', upload.fields([
         await fs.mkdir(hlsDir, { recursive: true });
         tempDirs.push(hlsDir);
 
-        await convertToHLS(file.buffer, hlsDir);
+        await convertToHLSFromFile(file.path, hlsDir);
         
         const gcsFolder = `hls/${hlsId}/`;
         await uploadHLSFolderToGCS(hlsDir, gcsFolder);
@@ -150,6 +155,7 @@ router.post('/upload-multilingual', upload.fields([
         const playlistPath = `${gcsFolder}playlist.m3u8`;
         const signedUrl = await getSignedUrl(playlistPath);
 
+        tempFiles.push(file.path);
         return {
           language: lang,
           gcsPath: playlistPath,
@@ -182,12 +188,19 @@ router.post('/upload-multilingual', upload.fields([
       details: error.message
     });
   } finally {
-    // Cleanup
+    // Cleanup temp dirs and files
     await Promise.all(
-      tempDirs.map(dir => 
+      tempDirs.map(dir =>
         fs.rm(dir, { recursive: true, force: true })
           .catch(e => console.error('Cleanup error:', e))
-    ));
+      )
+    );
+    await Promise.all(
+      tempFiles.map(file =>
+        fs.rm(file, { force: true })
+          .catch(e => console.error('File cleanup error:', e))
+      )
+    );
   }
 });
 
