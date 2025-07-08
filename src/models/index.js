@@ -12,6 +12,8 @@ import PointPurchase from './pointPurchase.js';
 import EpisodeBundlePrice from './episodeBundlePrice.js';
 import StaticContent from './staticContent.js';
 import EpisodeUserAccess from './episodeUserAccess.js';
+import Like from './like.js';
+import Share from './share.js';
 
 const sequelize = new Sequelize(
   config.DB_NAME,
@@ -36,6 +38,8 @@ const models = {
   Category: Category(sequelize),
   Series: Series(sequelize),
   Episode: Episode(sequelize),
+  Like: Like(sequelize),
+  Share: Share(sequelize),
   User: User(sequelize),
   RewardTask: RewardTask(sequelize),
   RewardTransaction: RewardTransaction(sequelize),

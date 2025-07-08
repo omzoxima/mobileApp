@@ -173,4 +173,54 @@ router.post('/episode/access', async (req, res) => {
   }
 });
 
+// POST /api/action (like, share, subscribe)
+router.post('/action', userContext, async (req, res) => {
+  try {
+    const { action, series_id, episode_id } = req.body;
+    let user_id = null;
+    let device_id = null;
+    if (req.user) {
+      user_id = req.user.id;
+    } else if (req.guestDeviceId) {
+      device_id = req.guestDeviceId;
+      // Try to find a user with this device_id
+      const user = await models.User.findOne({ where: { device_id } });
+      if (user) {
+        user_id = user.id;
+        device_id = null; // Prefer user_id if found
+      }
+    } else {
+      return res.status(401).json({ error: 'Authentication required: provide JWT or x-device-id header' });
+    }
+    if (!series_id && !episode_id) {
+      return res.status(400).json({ error: 'series_id or episode_id is required' });
+    }
+    if (!['like', 'share', 'subscribe'].includes(action)) {
+      return res.status(400).json({ error: 'Invalid action. Must be like, share, or subscribe.' });
+    }
+    // Determine target model
+    let Model = null;
+    if (action === 'like') Model = models.Like;
+    if (action === 'share') Model = models.Share;
+    if (action === 'subscribe') Model = models.Wishlist;
+    // Build where clause
+    const where = { };
+    if (user_id) where.user_id = user_id;
+    if (device_id) where.device_id = device_id;
+    if (series_id) where.series_id = series_id;
+    if (episode_id) where.episode_id = episode_id;
+    let record;
+    if (action === 'share') {
+      // Allow multiple shares
+      record = await Model.create({ ...where, created_at: new Date(), id: uuidv4() });
+    } else {
+      // Deduplicate like/subscribe
+      [record] = await Model.findOrCreate({ where, defaults: { created_at: new Date(), id: uuidv4() } });
+    }
+    res.json({ success: true, action, record });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to process action' });
+  }
+});
+
 export default router; 

@@ -1,7 +1,7 @@
 import { DataTypes } from 'sequelize';
 
 export default (sequelize) => {
-  const Wishlist = sequelize.define('Wishlist', {
+  const Share = sequelize.define('Share', {
     id: {
       type: DataTypes.UUID,
       primaryKey: true,
@@ -9,6 +9,7 @@ export default (sequelize) => {
     },
     user_id: {
       type: DataTypes.UUID,
+      allowNull: false,
       references: {
         model: 'users',
         key: 'id'
@@ -16,6 +17,7 @@ export default (sequelize) => {
     },
     series_id: {
       type: DataTypes.UUID,
+      allowNull: true,
       references: {
         model: 'series',
         key: 'id'
@@ -34,12 +36,8 @@ export default (sequelize) => {
       defaultValue: DataTypes.NOW
     }
   }, {
-    tableName: 'wishlist',
-    timestamps: false,
-    indexes: [
-      { unique: true, fields: ['user_id', 'series_id', 'episode_id'] }
-    ]
+    tableName: 'shares',
+    timestamps: false
   });
-
-  return Wishlist;
+  return Share;
 }; 
