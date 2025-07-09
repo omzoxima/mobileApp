@@ -284,4 +284,17 @@ router.get('/google/callback', passport.authenticate('google', { session: false,
   res.json({ token, user });
 });
 
+// GET /api/auth/admins - Get all admin users (role, phone_or_email, Name, created_at, updated_at)
+router.get('/admins', async (req, res) => {
+  try {
+    const admins = await models.User.findAll({
+      where: { role: 'admin' },
+      attributes: ['role', 'phone_or_email', 'Name', 'created_at', 'updated_at']
+    });
+    res.json(admins);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to fetch admin users' });
+  }
+});
+
 export default router;

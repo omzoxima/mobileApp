@@ -37,7 +37,20 @@ export default (sequelize) => {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
     },
+    google_id: {
+      type: DataTypes.STRING,
+      unique: true,
+      allowNull: true
+    },
     Name: {
+      type: DataTypes.TEXT,
+      defaultValue: null
+    },
+    role: {
+      type: DataTypes.TEXT,
+      defaultValue: null
+    },
+    password: {
       type: DataTypes.TEXT,
       defaultValue: null
     },
