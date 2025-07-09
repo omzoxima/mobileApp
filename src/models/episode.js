@@ -37,6 +37,9 @@ export default (sequelize) => {
     language: {
       type: DataTypes.STRING
     },
+    description: {
+      type: DataTypes.STRING
+    },
     title: {
       type: DataTypes.STRING
     },
