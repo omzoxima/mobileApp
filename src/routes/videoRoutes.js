@@ -7,28 +7,29 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
- 
-const { Series, Episode, Category,EpisodeBundlePrice } = models;
+
+const { Series, Episode, Category } = models;
 const router = express.Router();
- 
+
 // Configure FFmpeg
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
- 
+
 // Configure multer
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 1024 * 1024 * 1024 } // 1GB
 });
- 
+
 // HLS Conversion Function
 async function convertToHLS(videoBuffer, outputDir) {
   const tempInputPath = path.join(outputDir, 'input.mp4');
   await fs.writeFile(tempInputPath, videoBuffer);
- 
+
   const hlsPlaylist = path.join(outputDir, 'playlist.m3u8');
   
-  await new Promise((resolve, reject) => {
-    ffmpeg(tempInputPath)
+  return new Promise((resolve, reject) => {
+    ffmpeg()
+      .input(tempInputPath)
       .inputOptions([
         '-re',
         '-analyzeduration 100M',
@@ -50,28 +51,25 @@ async function convertToHLS(videoBuffer, outputDir) {
         '-f hls'
       ])
       .output(hlsPlaylist)
-      .on('end', resolve)
-      .on('error', reject)
+      .on('end', () => resolve(hlsPlaylist))
+      .on('error', (err) => reject(err))
       .run();
   });
- 
-  return path.basename(hlsPlaylist);
 }
- 
+
 // Upload Endpoint
 router.post('/upload-multilingual', upload.fields([
-  { name: 'thumbnail', maxCount: 1 },
   { name: 'videos', maxCount: 10 }
 ]), async (req, res) => {
   let tempDirs = [];
   
   try {
     // Validate inputs
-    const { title, episode_number, series_id, series_title, category, video_languages } = req.body;
-    if (!title || !episode_number) {
-      return res.status(400).json({ error: 'Title and episode number are required' });
+    const { title, episode_number, series_id, category, video_languages } = req.body;
+    if (!title || !episode_number || !series_id) {
+      return res.status(400).json({ error: 'Title, episode number, and series ID are required' });
     }
- 
+
     // Parse languages
     let languages;
     try {
@@ -80,15 +78,14 @@ router.post('/upload-multilingual', upload.fields([
     } catch {
       return res.status(400).json({ error: 'Invalid languages format' });
     }
- 
+
     // Validate files
-    const thumbnailFile = req.files.thumbnail?.[0];
     const videoFiles = req.files.videos || [];
     
     if (videoFiles.length !== languages.length) {
       return res.status(400).json({ error: 'Video and language count mismatch' });
     }
- 
+
     // Process category
     const categoryRecord = await Category.findOne({
       where: { name: category }
@@ -97,64 +94,13 @@ router.post('/upload-multilingual', upload.fields([
     if (!categoryRecord) {
       return res.status(400).json({ error: 'Category not found' });
     }
- 
-    // Process series
-    let series;
-    let episodeThumbnailUrl = null;
-    
-    if (series_id) {
-      series = await Series.findByPk(series_id);
-      if (!series) return res.status(400).json({ error: 'Series not found' });
-    } else if (series_title) {
-      series = await Series.findOne({ where: { title: series_title } });
-      // Do not upload thumbnail or create series yet
-    } else {
-      return res.status(400).json({ error: 'Series ID or title required' });
+
+    // Verify series exists
+    const series = await Series.findByPk(series_id);
+    if (!series) {
+      return res.status(400).json({ error: 'Series not found' });
     }
 
-    // Check episode number sequence and uniqueness (before any file upload)
-    let seriesForCheck = series;
-    if (!seriesForCheck && thumbnailFile) {
-      // If series does not exist, simulate what would be created
-      // But since no episodes exist, only episode_number === 1 is allowed
-      if (Number(episode_number) !== 1) {
-        return res.status(400).json({ error: 'First episode number for a new series must be 1.' });
-      }
-    } else if (seriesForCheck) {
-      const existingEpisodes = await Episode.findAll({
-        where: { series_id: seriesForCheck.id },
-        order: [['episode_number', 'ASC']]
-      });
-      const episodeNumbers = existingEpisodes.map(e => e.episode_number);
-      if (episodeNumbers.includes(Number(episode_number))) {
-        return res.status(400).json({ error: `Episode number ${episode_number} already exists for this series.` });
-      }
-      const maxEpisode = episodeNumbers.length > 0 ? Math.max(...episodeNumbers) : 0;
-      if (Number(episode_number) !== maxEpisode + 1) {
-        return res.status(400).json({ error: `Next episode number must be ${maxEpisode + 1}.` });
-      }
-    }
-
-    // Now upload thumbnail and create series if needed
-    if (!series && series_title) {
-      if (!thumbnailFile) {
-        return res.status(400).json({ error: 'Thumbnail required for new series' });
-      }
-      const uploadedUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
-      series = await Series.create({
-        title: series_title,
-        thumbnail_url: uploadedUrl,
-        category_id: categoryRecord.id
-      });
-      episodeThumbnailUrl = uploadedUrl; // Optionally use for first episode
-    } else if (series) {
-      // Existing series: do NOT upload or update series thumbnail
-      if (thumbnailFile) {
-        episodeThumbnailUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
-      }
-      // If no episode thumbnail, episodeThumbnailUrl remains null
-    }
- 
     // Process videos
     const subtitles = await Promise.all(
       videoFiles.map(async (file, i) => {
@@ -164,40 +110,43 @@ router.post('/upload-multilingual', upload.fields([
         
         await fs.mkdir(hlsDir, { recursive: true });
         tempDirs.push(hlsDir);
- 
-        await convertToHLS(file.buffer, hlsDir);
-        
-        const gcsFolder = `hls/${hlsId}/`;
-        await uploadHLSFolderToGCS(hlsDir, gcsFolder);
-        
-        const playlistPath = `${gcsFolder}playlist.m3u8`;
-        const signedUrl = await getSignedUrl(playlistPath);
- 
-        return {
-          language: lang,
-          gcsPath: playlistPath,
-          videoUrl: signedUrl
-        };
+
+        try {
+          const playlistName = await convertToHLS(file.buffer, hlsDir);
+          const gcsFolder = `hls/${hlsId}/`;
+          await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+          
+          const playlistPath = `${gcsFolder}playlist.m3u8`;
+          const signedUrl = await getSignedUrl(playlistPath);
+
+          return {
+            language: lang,
+            gcsPath: playlistPath,
+            videoUrl: signedUrl
+          };
+        } catch (error) {
+          console.error(`Error processing video for language ${lang}:`, error);
+          throw error;
+        }
       })
     );
- 
+
     // Create episode
     const episode = await Episode.create({
       title,
       episode_number,
       series_id: series.id,
-      thumbnail_url: episodeThumbnailUrl,
       description: req.body.episode_description || null,
       reward_cost_points: req.body.reward_cost_points || 0,
       subtitles: subtitles
     });
- 
+
     res.status(201).json({
       success: true,
       episode,
       signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
     });
- 
+
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({
@@ -210,11 +159,11 @@ router.post('/upload-multilingual', upload.fields([
       tempDirs.map(dir =>
         fs.rm(dir, { recursive: true, force: true })
           .catch(e => console.error('Cleanup error:', e))
-    ));
+      )
+    );
   }
 });
- 
- 
+
 
 
 // GET /api/series (paginated, filter by category)
@@ -314,6 +263,57 @@ router.get('/episode-bundles', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// GET /api/series/search?query=...
+router.get('/series/search', async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ error: 'Query is required' });
+  const series = await models.Series.findAll({
+    where: { title: { [Sequelize.Op.iLike]: `%${query}%` } },
+    attributes: ['id', 'title'],
+    order: [['title', 'ASC']]
+  });
+  res.json(series.map(s => ({ uuid: s.id, title: s.title })));
+});
+
+// POST /api/series
+router.post('/series', async (req, res) => {
+  const { title, category_id, thumbnail_url } = req.body;
+  if (!title || !category_id) return res.status(400).json({ error: 'Title and category_id are required' });
+  const newSeries = await models.Series.create({ title, category_id, thumbnail_url });
+  res.status(201).json({ uuid: newSeries.id, title: newSeries.title });
+});
+
+// GET /api/categories/search?query=...
+router.get('/categories/search', async (req, res) => {
+  const { query } = req.query;
+  if (!query) return res.status(400).json({ error: 'Query is required' });
+  const categories = await models.Category.findAll({
+    where: { name: { [Sequelize.Op.iLike]: `%${query}%` } },
+    attributes: ['id', 'name'],
+    order: [['name', 'ASC']]
+  });
+  res.json(categories.map(c => ({ uuid: c.id, name: c.name })));
+});
+
+// POST /api/categories (with file upload)
+//import multer from 'multer';
+const categoryUpload = multer({ dest: '/tmp/uploads' });
+router.post('/categories', categoryUpload.single('file'), async (req, res) => {
+  const { name, description } = req.body;
+  if (!name) return res.status(400).json({ error: 'Name is required' });
+  let fileUrl = null;
+  if (req.file) {
+    fileUrl = await uploadToGCS(req.file, 'category-files');
+  }
+  const newCategory = await models.Category.create({
+    name,
+    description,
+    file_url: fileUrl // Add this field to your model if needed
+  });
+  res.status(201).json({ uuid: newCategory.id, name: newCategory.name });
+});
+
 // Add this test endpoint
 router.get('/test-ffmpeg', (req, res) => {
   ffmpeg().getAvailableFormats((err, formats) => {

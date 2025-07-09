@@ -18,7 +18,7 @@ export async function uploadToGCS(file, folder) {
       cacheControl: 'public, max-age=31536000'
     },
     // Important for public files
-    public: false // Uniform bucket-level access doesn't use this, but good to be explicit
+    public: true // Uniform bucket-level access doesn't use this, but good to be explicit
   });
   
   return fileName;
@@ -58,10 +58,7 @@ export async function getSignedUrl(gcsPath, expiryMinutes = 60) {
         expires: Date.now() + expiryMinutes * 60 * 1000,
         version: 'v4',
         // For HLS streaming, it's good to include the response headers
-        extensionHeaders: {
-          'response-content-type': gcsPath.endsWith('.m3u8') ? 
-            'application/x-mpegURL' : 'video/MP2T'
-        }
+       
       });
     return url;
   } catch (error) {
