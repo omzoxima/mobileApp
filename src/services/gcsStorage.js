@@ -18,7 +18,7 @@ export async function uploadToGCS(file, folder) {
       cacheControl: 'public, max-age=31536000'
     },
     // Important for public files
-    public: true // Uniform bucket-level access doesn't use this, but good to be explicit
+    public: false // Uniform bucket-level access doesn't use this, but good to be explicit
   });
   
   return fileName;
