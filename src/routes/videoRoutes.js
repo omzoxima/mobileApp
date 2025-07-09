@@ -65,8 +65,8 @@ router.post('/upload-multilingual', upload.fields([
   
   try {
     // Validate inputs
-    const { title, episode_number, series_id, category, video_languages } = req.body;
-    if (!title || !episode_number || !series_id) {
+    const { title, episode_number, series_id, video_languages } = req.body;
+    if (!episode_number || !series_id) {
       return res.status(400).json({ error: 'Title, episode number, and series ID are required' });
     }
 
@@ -87,13 +87,7 @@ router.post('/upload-multilingual', upload.fields([
     }
 
     // Process category
-    const categoryRecord = await Category.findOne({
-      where: { name: category }
-    }) || await Category.findByPk(category);
     
-    if (!categoryRecord) {
-      return res.status(400).json({ error: 'Category not found' });
-    }
 
     // Verify series exists
     const series = await Series.findByPk(series_id);
