@@ -8,7 +8,7 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
  
-const { Series, Episode, Category } = models;
+const { Series, Episode, Category,EpisodeBundlePrice } = models;
 const router = express.Router();
  
 // Configure FFmpeg
@@ -100,36 +100,59 @@ router.post('/upload-multilingual', upload.fields([
  
     // Process series
     let series;
-    let thumbnailUrl = null;
+    let episodeThumbnailUrl = null;
     
     if (series_id) {
       series = await Series.findByPk(series_id);
       if (!series) return res.status(400).json({ error: 'Series not found' });
-      thumbnailUrl = series.thumbnail_url;
     } else if (series_title) {
       series = await Series.findOne({ where: { title: series_title } });
-      
-      if (!series) {
-        if (!thumbnailFile) {
-          return res.status(400).json({ error: 'Thumbnail required for new series' });
-        }
-        
-        thumbnailUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
-        series = await Series.create({
-          title: series_title,
-          thumbnail_url: thumbnailUrl,
-          category_id: categoryRecord.id
-        });
-      } else {
-        thumbnailUrl = series.thumbnail_url;
-      }
+      // Do not upload thumbnail or create series yet
     } else {
       return res.status(400).json({ error: 'Series ID or title required' });
     }
- 
-    // Upload thumbnail if provided
-    if (thumbnailFile) {
-      thumbnailUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
+
+    // Check episode number sequence and uniqueness (before any file upload)
+    let seriesForCheck = series;
+    if (!seriesForCheck && thumbnailFile) {
+      // If series does not exist, simulate what would be created
+      // But since no episodes exist, only episode_number === 1 is allowed
+      if (Number(episode_number) !== 1) {
+        return res.status(400).json({ error: 'First episode number for a new series must be 1.' });
+      }
+    } else if (seriesForCheck) {
+      const existingEpisodes = await Episode.findAll({
+        where: { series_id: seriesForCheck.id },
+        order: [['episode_number', 'ASC']]
+      });
+      const episodeNumbers = existingEpisodes.map(e => e.episode_number);
+      if (episodeNumbers.includes(Number(episode_number))) {
+        return res.status(400).json({ error: `Episode number ${episode_number} already exists for this series.` });
+      }
+      const maxEpisode = episodeNumbers.length > 0 ? Math.max(...episodeNumbers) : 0;
+      if (Number(episode_number) !== maxEpisode + 1) {
+        return res.status(400).json({ error: `Next episode number must be ${maxEpisode + 1}.` });
+      }
+    }
+
+    // Now upload thumbnail and create series if needed
+    if (!series && series_title) {
+      if (!thumbnailFile) {
+        return res.status(400).json({ error: 'Thumbnail required for new series' });
+      }
+      const uploadedUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
+      series = await Series.create({
+        title: series_title,
+        thumbnail_url: uploadedUrl,
+        category_id: categoryRecord.id
+      });
+      episodeThumbnailUrl = uploadedUrl; // Optionally use for first episode
+    } else if (series) {
+      // Existing series: do NOT upload or update series thumbnail
+      if (thumbnailFile) {
+        episodeThumbnailUrl = await uploadToGCS(thumbnailFile, 'thumbnails');
+      }
+      // If no episode thumbnail, episodeThumbnailUrl remains null
     }
  
     // Process videos
@@ -163,10 +186,10 @@ router.post('/upload-multilingual', upload.fields([
       title,
       episode_number,
       series_id: series.id,
-      thumbnail_url: thumbnailUrl,
+      thumbnail_url: episodeThumbnailUrl,
       description: req.body.episode_description || null,
       reward_cost_points: req.body.reward_cost_points || 0,
-      subtitles: JSON.stringify(subtitles)
+      subtitles: subtitles
     });
  
     res.status(201).json({
