@@ -6,19 +6,51 @@ import { Op } from 'sequelize';
 const { RewardTask, RewardTransaction, User} = models;
 const router = express.Router();
 
-// GET /api/reward-tasks/reward-tasks - List all active tasks, filter 'login' for registered users
-router.get('/reward-tasks', userContext, async (req, res) => {
+// Optimized /reward_task route
+router.get('/reward_task', async (req, res) => {
+  const { User, RewardTask, RewardTransaction } = models;
   try {
-    let where = { is_active: true };
-    if (req.user && req.user.login_type !== 'guest') {
-      // Exclude login task for registered users
-      where.type = { [Op.ne]: 'login' };
-        }
-    // For guests, show all tasks
-    const tasks = await RewardTask.findAll({ where });
-    res.json(tasks);
+    let user = null;
+    let deviceId = req.headers['x-device-id'];
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      user = await User.findByPk(payload.userId);
+    } else if (deviceId) {
+      user = await User.findOne({ where: { device_id: deviceId } });
+    }
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+
+    // Get all active reward tasks
+    const tasks = await RewardTask.findAll({ where: { is_active: true } });
+    // Get all user's reward transactions for one_time tasks
+    const oneTimeTaskIds = tasks.filter(t => t.repeat_type === 'one_time').map(t => t.id);
+    const claimed = await RewardTransaction.findAll({
+      where: { user_id: user.id, task_id: { [Op.in]: oneTimeTaskIds } }
+    });
+    const claimedIds = new Set(claimed.map(r => r.task_id));
+    // Filter out one_time tasks already claimed
+    const availableTasks = tasks.filter(t => !(t.repeat_type === 'one_time' && claimedIds.has(t.id)));
+    // Add lock status
+    const today = new Date();
+    const result = availableTasks.map(task => ({
+      id: task.id,
+      name: task.name,
+      description: task.description,
+      points: task.points,
+      type: task.type,
+      trigger: task.trigger,
+      repeat_type: task.repeat_type,
+      unlock_value: task.unlock_value,
+      max_count: task.max_count,
+      lock: (task.start_date && task.end_date)
+        ? !(today >= task.start_date && today <= task.end_date)
+        : true
+    }));
+    res.json(result);
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to fetch tasks' });
+    res.status(500).json({ error: error.message });
   }
 });
 

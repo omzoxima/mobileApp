@@ -16,7 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use('/api', videoRoutes);
 app.use('/api/auth', authRoutes);
-app.use('/api/reward-tasks', rewardTaskRoutes);
+app.use('/api/task', rewardTaskRoutes);
 app.use('/api', miscRoutes);
 app.use('/api', adminRoutes);
 // Error handling middleware

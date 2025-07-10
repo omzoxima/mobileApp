@@ -25,9 +25,21 @@ export default (sequelize) => {
     type: {
       type: DataTypes.STRING // e.g., 'login', 'deeplink'
     },
-    day_frequency: {
-      type: DataTypes.INTEGER, // How many days before user can do again
-      defaultValue: 1
+    trigger: {
+      type: DataTypes.STRING, // What triggers the reward (e.g., 'daily_streak_3', 'instagram_follow')
+      allowNull: true
+    },
+    repeat_type: {
+      type: DataTypes.STRING, // 'one_time', 'daily', 'share_meter', etc.
+      allowNull: true
+    },
+    unlock_value: {
+      type: DataTypes.INTEGER, // Number of episodes to unlock
+      allowNull: true
+    },
+    max_count: {
+      type: DataTypes.INTEGER, // Max times this reward can be earned (null for unlimited)
+      allowNull: true
     },
     created_at: {
       type: DataTypes.DATE,

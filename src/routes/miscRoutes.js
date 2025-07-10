@@ -1,8 +1,10 @@
 import express from 'express';
 import { Op } from 'sequelize';
 import models from '../models/index.js';
+import { sequelize } from '../models/index.js';
 import userContext from '../middlewares/userContext.js';
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 
 const { Series, Episode, User, StaticContent } = models;
 const router = express.Router();
@@ -23,26 +25,130 @@ router.get('/search', async (req, res) => {
   }
 });
 
-// GET /api/profile
-router.get('/profile', userContext, async (req, res) => {
+// Optimized /profile route
+router.get('/profile', async (req, res) => {
+  const { User, RewardTask, RewardTransaction } = models;
+  let t; // Declare transaction outside try block
+  
   try {
-    if (req.user) {
-      return res.json(req.user);
+    // Initial user fetching without transaction
+    let user = null;
+    const deviceId = req.headers['x-device-id'];
+    const authHeader = req.headers['authorization'];
+    
+    if (authHeader?.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      const payload = jwt.verify(token, process.env.JWT_SECRET);
+      user = await User.findByPk(payload.userId, {
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date']
+      });
+    } else if (deviceId) {
+      user = await User.findOne({
+        where: { device_id: deviceId },
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date']
+      });
     }
-    if (req.guestDeviceId) {
-      // Look up guest user by device_id
-      const guestUser = await User.findOne({ where: { device_id: req.guestDeviceId, login_type: 'guest' } });
-      if (guestUser) {
-        return res.json(guestUser);
-      } else {
-        return res.status(404).json({ error: 'Guest user not found for provided device_id' });
+    
+    if (!user) {
+      // Only start transaction when creating new user
+      t = await sequelize.transaction();
+      user = await User.create({
+        device_id: deviceId,
+        Name: 'Guest User',
+        login_type: 'guest',
+        current_reward_balance: 0,
+        is_active: true
+      }, { 
+        transaction: t,
+        returning: true
+      });
+      
+      // Process rewards for new user
+      const today = new Date();
+      const appOpenTasks = await RewardTask.findAll({
+        where: {
+          type: 'app_open',
+          is_active: true,
+        },
+        attributes: ['id', 'points', 'repeat_type'],
+        transaction: t
+      });
+
+      const transactions = [];
+      let pointsGranted = 0;
+      for (const task of appOpenTasks) {
+        transactions.push({
+          id: uuidv4(),
+          user_id: user.id,
+          task_id: task.id,
+          type: 'earn',
+          points: task.points,
+          created_at: today
+        });
+        pointsGranted += task.points;
       }
+
+      // Debug log for profile, points, and tasks
+      console.log('PROFILE DEBUG:', {
+        user: user.toJSON(),
+        pointsGranted,
+        appOpenTasks: appOpenTasks.map(t => t.toJSON())
+      });
+
+      if (transactions.length > 0) {
+        await user.increment('current_reward_balance', {
+          by: pointsGranted,
+          transaction: t
+        });
+        await RewardTransaction.bulkCreate(transactions, { transaction: t });
+      }
+
+      await t.commit();
+
+      return res.json({
+        user: {
+          id: user.id,
+          name: user.Name,
+          device_id: user.device_id,
+          current_reward_balance: user.current_reward_balance,
+          lock: true, // New users typically start locked
+          start_date: user.start_date,
+          end_date: user.end_date
+        },
+        pointsGranted
+      });
     }
-    return res.status(401).json({ error: 'Unauthorized' });
+    
+    // Existing user logic (no transaction needed for simple read)
+    const today = new Date();
+    let lock = true;
+    if (user.start_date && user.end_date) {
+      lock = !(today >= user.start_date && today <= user.end_date);
+    }
+    
+    res.json({
+      user: {
+        id: user.id,
+        name: user.Name,
+        device_id: user.device_id,
+        current_reward_balance: user.current_reward_balance,
+        lock,
+        start_date: user.start_date,
+        end_date: user.end_date
+      },
+      pointsGranted: 0
+    });
+    
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to get profile' });
+    if (t) await t.rollback();
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    console.error('Profile error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 // GET /api/static/about-us
 router.get('/static/about-us', async (req, res) => {
