@@ -143,7 +143,19 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
       return res.status(404).json({ error: 'No HLS video found for the requested language.' });
     }
 
-    const signedUrl = await getSignedUrl(subtitle.gcsPath, 3600); // 1 hour expiry
+    // --- Begin playlist rewrite logic ---
+    const gcsFolder = subtitle.gcsPath.replace(/playlist\.m3u8$/, '');
+    const segmentFiles = await listSegmentFiles(gcsFolder);
+    const segmentSignedUrls = {};
+    await Promise.all(segmentFiles.map(async (seg) => {
+      segmentSignedUrls[seg] = await getSignedUrl(seg, 3600); // 1 hour expiry
+    }));
+    let playlistText = await downloadFromGCS(subtitle.gcsPath);
+    playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
+    await uploadTextToGCS(subtitle.gcsPath, playlistText, 'application/x-mpegURL');
+    const signedUrl = await getSignedUrl(subtitle.gcsPath, 3600);
+    // --- End playlist rewrite logic ---
+
     return res.json({ signedUrl });
   } catch (error) {
     console.error('Error generating HLS signed URL:', error);
