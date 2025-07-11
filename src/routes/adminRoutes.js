@@ -245,7 +245,7 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
       if (imageTypes.includes(req.file.mimetype)) {
         // For images, use simple signed URL
         const gcsPath = await uploadToGCS(req.file, 'thumbnails');
-        thumbnail_url = await getSignedUrl(gcsPath, 5256000); // 10 years
+        thumbnail_url = await getSignedUrl(gcsPath); // 10 years
       } else {
         // For video files, use HLS conversion
         const hlsId = uuidv4();
@@ -259,7 +259,7 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
           await uploadHLSFolderToGCS(hlsDir, gcsFolder);
           
           const playlistPath = `${gcsFolder}playlist.m3u8`;
-          const signedUrl = await getSignedUrl(playlistPath, 604800); // 10 years
+          const signedUrl = await getSignedUrl(playlistPath); // 10 years
 
           thumbnail_url = signedUrl;
         } catch (error) {
