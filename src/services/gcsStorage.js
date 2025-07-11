@@ -63,7 +63,7 @@ export async function uploadHLSFolderToGCS(localDir, gcsPath, makePublic = false
 }
 
 // Generate v4 signed URL
-export async function getSignedUrl(gcsPath, expiryMinutes = 432000) {
+export async function getSignedUrl(gcsPath, expiryMinutes = 60) {
   try {
     const [url] = await storage
       .bucket(bucketName)
