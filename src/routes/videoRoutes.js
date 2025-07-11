@@ -62,15 +62,6 @@ router.get('/episodes/:id', async (req, res) => {
 
 
 
-// GET /api/categories
-router.get('/categories', async (req, res) => {
-  try {
-    const categories = await Category.findAll();
-    res.json(categories);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
 // GET /api/episode-bundles
 router.get('/episode-bundles', async (req, res) => {

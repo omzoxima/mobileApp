@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import models from '../models/index.js';
-import { uploadHLSFolderToGCS, getSignedUrl } from '../services/gcsStorage.js';
+import { uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
@@ -332,8 +332,24 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
           const gcsFolder = `hls/${hlsId}/`;
           await uploadHLSFolderToGCS(hlsDir, gcsFolder);
           
+          // --- Begin playlist rewrite logic ---
+          // 1. List all .ts segment files in GCS
+          const segmentFiles = await listSegmentFiles(gcsFolder);
+          // 2. Generate signed URLs for each segment
+          const segmentSignedUrls = {};
+          await Promise.all(segmentFiles.map(async (seg) => {
+            segmentSignedUrls[seg] = await getSignedUrl(seg, 60 * 24 * 7); // 7 days expiry
+          }));
+          // 3. Download the playlist
           const playlistPath = `${gcsFolder}playlist.m3u8`;
+          let playlistText = await downloadFromGCS(playlistPath);
+          // 4. Replace segment references with signed URLs
+          playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
+          // 5. Upload the modified playlist back to GCS
+          await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
+          // 6. Generate signed URL for the playlist
           const signedUrl = await getSignedUrl(playlistPath);
+          // --- End playlist rewrite logic ---
 
           return {
             language: lang,
@@ -376,7 +392,6 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
         fs.rm(dir, { recursive: true, force: true })
           .catch(e => console.error('Cleanup error:', e))
     ));
-  
   }
 });
 

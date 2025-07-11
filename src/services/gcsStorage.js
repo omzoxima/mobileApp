@@ -81,3 +81,23 @@ export async function getSignedUrl(gcsPath, expiryMinutes = 60) {
     throw new Error('Failed to generate signed URL');
   }
 }
+
+// List all .ts segment files in a GCS folder
+export async function listSegmentFiles(gcsFolder) {
+  const [files] = await storage.bucket(bucketName).getFiles({ prefix: gcsFolder });
+  return files.filter(f => f.name.endsWith('.ts')).map(f => f.name);
+}
+
+// Download a file from GCS
+export async function downloadFromGCS(gcsPath) {
+  const [contents] = await storage.bucket(bucketName).file(gcsPath).download();
+  return contents.toString();
+}
+
+// Upload a file to GCS (overwrite)
+export async function uploadTextToGCS(gcsPath, text, contentType = 'application/x-mpegURL') {
+  await storage.bucket(bucketName).file(gcsPath).save(text, {
+    metadata: { contentType, cacheControl: 'public, max-age=31536000' },
+    resumable: false
+  });
+}
