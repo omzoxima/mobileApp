@@ -7,7 +7,7 @@ const storage = new Storage();
 const bucketName = 'run-sources-tuktuki-464514-asia-south1';
 
 // Upload single file to GCS
-export async function uploadToGCS(file, folder) {
+export async function uploadToGCS(file, folder, makePublic = false) {
   const fileName = `${folder}/${uuidv4()}${path.extname(file.originalname)}`;
   const fileObj = storage.bucket(bucketName).file(fileName);
   
@@ -16,16 +16,20 @@ export async function uploadToGCS(file, folder) {
       contentType: file.mimetype,
       // Add cache control for better CDN performance
       cacheControl: 'public, max-age=31536000'
-    },
-    // Important for public files
-    public: false // Uniform bucket-level access doesn't use this, but good to be explicit
+    }
   });
+  
+  // Make file public if requested
+  if (makePublic) {
+    await fileObj.makePublic();
+    return `https://storage.googleapis.com/${bucketName}/${fileName}`;
+  }
   
   return fileName;
 }
 
 // Upload HLS folder to GCS
-export async function uploadHLSFolderToGCS(localDir, gcsPath) {
+export async function uploadHLSFolderToGCS(localDir, gcsPath, makePublic = false) {
   const files = await fs.readdir(localDir);
   
   await Promise.all(files.map(async (file) => {
@@ -37,14 +41,25 @@ export async function uploadHLSFolderToGCS(localDir, gcsPath) {
                       file.endsWith('.ts') ? 'video/MP2T' : 
                       'application/octet-stream';
     
-    await storage.bucket(bucketName).file(destination).save(fileContent, {
+    const fileObj = storage.bucket(bucketName).file(destination);
+    
+    await fileObj.save(fileContent, {
       metadata: {
         contentType,
         cacheControl: 'public, max-age=31536000' // Cache for 1 year
       },
       resumable: false // Better for small files like HLS segments
     });
+    
+    // Make file public if requested
+    if (makePublic) {
+      await fileObj.makePublic();
+    }
   }));
+  
+  if (makePublic) {
+    return `https://storage.googleapis.com/${bucketName}/${gcsPath}playlist.m3u8`;
+  }
 }
 
 // Generate v4 signed URL

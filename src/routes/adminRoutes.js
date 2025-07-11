@@ -259,7 +259,7 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
           await uploadHLSFolderToGCS(hlsDir, gcsFolder);
           
           const playlistPath = `${gcsFolder}playlist.m3u8`;
-          const signedUrl = await getSignedUrl(playlistPath, 5256000); // 10 years
+          const signedUrl = await getSignedUrl(playlistPath, 604800); // 10 years
 
           thumbnail_url = signedUrl;
         } catch (error) {
