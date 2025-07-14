@@ -1,287 +1,171 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import models from '../models/index.js';
-import twilio from 'twilio';
-import nodemailer from 'nodemailer';
 import fetch from 'node-fetch';
-import passport from 'passport';
-import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 
-const { User } = models;
-
+const { User, RewardTransaction } = models;
 const router = express.Router();
 
-// In-memory OTP store (for demo; use Redis or DB in production)
-const otpStore = {};
+// Helper: Generate JWT
+function generateJwt(user) {
+  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+}
 
-// Twilio setup
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-const twilioFrom = process.env.TWILIO_PHONE_NUMBER;
-
-// Nodemailer setup
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
+// Helper: Get user details from provider
+async function getUserFromProvider(provider, token) {
+  if (provider === 'google') {
+    // Google: verify token
+    const res = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${token}`);
+    const data = await res.json();
+    if (!data.sub) throw new Error('Invalid Google token');
+    return {
+      providerId: data.sub,
+      email: data.email,
+      name: data.name,
+      providerField: 'google_id',
+    };
+  } else if (provider === 'facebook') {
+    // Facebook: verify token
+    const res = await fetch(`https://graph.facebook.com/me?fields=id,name,email&access_token=${token}`);
+    const data = await res.json();
+    if (!data.id) throw new Error('Invalid Facebook token');
+    return {
+      providerId: data.id,
+      email: data.email,
+      name: data.name,
+      providerField: 'facebook_id',
+    };
+  } else if (provider === 'apple') {
+    // Apple: decode JWT (no signature verification here)
+    const [header, payload] = token.split('.');
+    if (!payload) throw new Error('Invalid Apple token');
+    const decoded = JSON.parse(Buffer.from(payload, 'base64').toString('utf8'));
+    if (!decoded.sub) throw new Error('Invalid Apple token');
+    return {
+      providerId: decoded.sub,
+      email: decoded.email,
+      name: decoded.name || '',
+      providerField: 'apple_id',
+    };
   }
-});
+  throw new Error('Unsupported provider');
+}
 
-// Replace with your actual values
-const FACEBOOK_CLIENT_ID = process.env.FACEBOOK_CLIENT_ID;
-const FACEBOOK_CLIENT_SECRET = process.env.FACEBOOK_CLIENT_SECRET;
-const FACEBOOK_REDIRECT_URI = 'http://localhost:8080/api/auth/facebook/callback'; // Must match your Facebook app settings
-
-// Google OAuth2.0 setup
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:8080/api/auth/google/callback';
-
-passport.use(new GoogleStrategy({
-  clientID: GOOGLE_CLIENT_ID,
-  clientSecret: GOOGLE_CLIENT_SECRET,
-  callbackURL: GOOGLE_CALLBACK_URL,
-}, async (accessToken, refreshToken, profile, done) => {
+// Route 1: Social Login
+router.post('/social-login', async (req, res) => {
+  const { provider, token } = req.body;
+  if (!provider || !token) return res.status(400).json({ error: 'provider and token are required' });
   try {
-    let user = await User.findOne({ where: { google_id: profile.id } });
+    const { providerId, email, name, providerField } = await getUserFromProvider(provider, token);
+    // Find or create user
+    let where = {};
+    where[providerField] = providerId;
+    let user = await User.findOne({ where });
     if (!user) {
       user = await User.create({
-        google_id: profile.id,
-        Name: profile.displayName,
-        phone_or_email: profile.emails && profile.emails[0] ? profile.emails[0].value : '',
-        login_type: 'google',
-        is_active: true
-      });
-    }
-    return done(null, user);
-  } catch (err) {
-    return done(err, null);
-  }
-}));
-
-// Required for passport (no session storage, just pass user)
-passport.serializeUser((user, done) => done(null, user.id));
-passport.deserializeUser(async (id, done) => {
-  try {
-    const user = await User.findByPk(id);
-    done(null, user);
-  } catch (err) {
-    done(err, null);
-  }
-});
-
-// Express middleware for passport
-router.use(passport.initialize());
-
-// POST /api/auth/request_otp
-router.post('/request_otp', async (req, res) => {
-  try {
-    const { phoneOrEmail } = req.body;
-    if (!phoneOrEmail) return res.status(400).json({ error: 'phoneOrEmail is required' });
-
-    // Validate phone or email
-    const phoneRegex = /^\d{10}$/;
-    const emailRegex = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
-    let isPhone = false, isEmail = false;
-    if (phoneRegex.test(phoneOrEmail)) {
-      isPhone = true;
-    } else if (emailRegex.test(phoneOrEmail)) {
-      isEmail = true;
-    } else {
-      return res.status(400).json({ error: 'Enter a valid 10-digit phone number or email address' });
-    }
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    otpStore[phoneOrEmail] = otp;
-    console.log('OTP sent to', phoneOrEmail, 'with OTP:', otp);
-
-    if (isPhone) {
-      // Send OTP via Twilio SMS
-      await twilioClient.messages.create({
-        body: `Your OTP is: ${otp}`,
-        from: twilioFrom,
-        to: `+91${phoneOrEmail}` // assuming India country code, change as needed
-      });
-    } else if (isEmail) {
-      // Send OTP via email
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: phoneOrEmail,
-        subject: 'Your OTP Code',
-        text: `Your OTP is: ${otp}`
-      });
-    }
-
-    res.json({ message: 'OTP sent successfully' });
-  } catch (error) {
-    console.error('Error sending OTP:', error);
-    res.status(500).json({ error: error.message || 'Failed to send OTP' });
-  }
-});
-
-// POST /api/auth/verify_otp
-router.post('/verify_otp', async (req, res) => {
-  const { phoneOrEmail, otp, deviceId } = req.body;
-  if (!phoneOrEmail || !otp || !deviceId) return res.status(400).json({ error: 'phoneOrEmail, otp, and deviceId are required' });
-  if (otpStore[phoneOrEmail] !== otp) return res.status(400).json({ error: 'Invalid OTP' });
-
-  let user = await User.findOne({ where: { phone_or_email: phoneOrEmail } });
-  let isNew = false;
-  if (!user) {
-    user = await User.create({ phone_or_email: phoneOrEmail, login_type: 'otp', device_id: deviceId, current_reward_balance: 100 });
-    isNew = true;
-  } else if (user.device_id !== deviceId) {
-    user.device_id = deviceId;
-    user.device_change_count = (user.device_change_count || 0) + 1;
-    await user.save();
-  }
-  delete otpStore[phoneOrEmail];
-  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-  res.json({ token, isNew });
-});
-
-// POST /api/auth/device-lock-login
-router.post('/device-lock-login', async (req, res) => {
-  const { login, device_id } = req.body;
-  if (!login || !device_id) {
-    return res.status(400).json({ error: 'login and device_id are required' });
-  }
-  try {
-    const user = await models.User.findOne({ where: { phone_or_email: login } });
-    if (!user) {
-      return res.status(401).json({ error: 'User not found' });
-    }
-    if (user.device_id && user.device_id !== device_id) {
-      return res.status(403).json({ error: 'Device lock: login not allowed from this device.' });
-    }
-    // If device_id is not set, set it now (first login)
-    if (!user.device_id) {
-      user.device_id = device_id;
-      await user.save();
-    }
-    // Continue with login (e.g., generate JWT, etc.)
-    return res.json({ message: 'Login allowed', userId: user.id });
-  } catch (error) {
-    console.error('Device lock login error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// POST /api/auth/guest-start
-router.post('/guest-start', async (req, res) => {
-  const { device_id } = req.body;
-  if (!device_id) {
-    return res.status(400).json({ error: 'device_id is required' });
-  }
-  try {
-    let user = await models.User.findOne({ where: { device_id, phone_or_email: '' } });
-    if (!user) {
-      user = await models.User.create({
-        device_id,
-        phone_or_email: '',
-        current_reward_balance: 10,
-        login_type: 'guest',
-        is_active: true
-      });
-    }
-    return res.json({ message: 'Guest user started', userId: user.id, reward_points: user.current_reward_balance });
-  } catch (error) {
-    console.error('Guest start error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// Step 1: Redirect user to Facebook login (frontend should do this, but you can provide the URL)
-router.get('/facebook', (req, res) => {
-  const fbAuthUrl = `https://www.facebook.com/v18.0/dialog/oauth?client_id=${FACEBOOK_CLIENT_ID}&redirect_uri=${encodeURIComponent(FACEBOOK_REDIRECT_URI)}&scope=email,public_profile`;
-  res.redirect(fbAuthUrl);
-});
-
-// Step 2: Facebook redirects here with ?code=...
-router.get('/facebook/callback', async (req, res) => {
-  const { code } = req.query;
-  if (!code) return res.status(400).json({ error: 'No code provided' });
-
-  try {
-    // Exchange code for access token
-    const tokenRes = await fetch(`https://graph.facebook.com/v18.0/oauth/access_token?client_id=${FACEBOOK_CLIENT_ID}&redirect_uri=${encodeURIComponent(FACEBOOK_REDIRECT_URI)}&client_secret=${FACEBOOK_CLIENT_SECRET}&code=${code}`);
-    const tokenData = await tokenRes.json();
-    if (!tokenData.access_token) return res.status(400).json({ error: 'Failed to get access token', details: tokenData });
-
-    // Fetch user info
-    const userRes = await fetch(`https://graph.facebook.com/me?fields=id,name,email&access_token=${tokenData.access_token}`);
-    const fbUser = await userRes.json();
-    if (!fbUser.id) return res.status(400).json({ error: 'Failed to get user info', details: fbUser });
-
-    // Find or create user in your DB
-    let user = await User.findOne({ where: { facebook_id: fbUser.id } });
-    if (!user) {
-      user = await User.create({
-        facebook_id: fbUser.id,
-        Name: fbUser.name,
-        phone_or_email: fbUser.email || '',
-        login_type: 'facebook',
-        is_active: true
-      });
-    }
-
-    // Generate JWT
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-
-    // You can redirect to your frontend with the token, or just return it
-    // res.redirect(`http://your-frontend-url.com?token=${token}`);
-    res.json({ token, user });
-  } catch (error) {
-    console.error('Facebook OAuth error:', error);
-    res.status(500).json({ error: error.message || 'Facebook OAuth failed' });
-  }
-});
-
-// POST /api/auth/facebook-login
-router.post('/facebook-login', async (req, res) => {
-  const { access_token } = req.body;
-  if (!access_token) {
-    return res.status(400).json({ error: 'access_token is required' });
-  }
-  try {
-    // Get user profile from Facebook
-    const fbRes = await fetch(`https://graph.facebook.com/me?fields=id,name,email&access_token=${access_token}`);
-    const fbData = await fbRes.json();
-    if (!fbData.id) {
-      return res.status(400).json({ error: 'Invalid Facebook access token', details: fbData });
-    }
-    let user = await User.findOne({ where: { facebook_id: fbData.id } });
-    let isNew = false;
-    if (!user) {
-      user = await User.create({
-        facebook_id: fbData.id,
-        Name: fbData.name,
-        phone_or_email: fbData.email || '',
-        login_type: 'facebook',
+        [providerField]: providerId,
+        phone_or_email: email || '',
+        Name: name || '',
+        login_type: provider,
         is_active: true,
-        current_reward_balance: 5
+        current_reward_balance: 0
       });
-      isNew = true;
     }
-    const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-    res.json({ token, user, isNew });
+    const jwtToken = generateJwt(user);
+    res.json({ token: jwtToken, user });
   } catch (error) {
-    console.error('Facebook login error:', error);
-    res.status(500).json({ error: error.message || 'Failed to login with Facebook' });
+    res.status(400).json({ error: error.message });
   }
 });
 
-// Route: Start Google OAuth2.0 login
-router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+// Route 2: Reward Transaction
+router.post('/reward-transaction', async (req, res) => {
+  // Check for JWT or device_id in headers
+  const authHeader = req.headers['authorization'];
+  const deviceId = req.headers['x-device-id'];
+  let user = null;
 
-// Route: Google OAuth2.0 callback
-router.get('/google/callback', passport.authenticate('google', { session: false, failureRedirect: '/' }), (req, res) => {
-  // Generate JWT and return to frontend
-  const user = req.user;
-  const token = jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
-  // You can redirect to your frontend with the token, or just return it
-  // res.redirect(`http://your-frontend-url.com?token=${token}`);
-  res.json({ token, user });
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      user = await User.findByPk(decoded.userId);
+    } catch (err) {
+      return res.status(401).json({ error: 'Invalid JWT token' });
+    }
+  } else if (deviceId) {
+    user = await User.findOne({ where: { device_id: deviceId } });
+    if (!user) return res.status(401).json({ error: 'Invalid device_id' });
+  } else {
+    return res.status(401).json({ error: 'Authorization required (JWT or device_id)' });
+  }
+
+  const { paymentType, episodeCount, startTime, endTime } = req.body;
+  if (!paymentType) return res.status(400).json({ error: 'paymentType is required' });
+
+  try {
+    let transaction;
+    if (paymentType === 'bundle') {
+      if (!episodeCount) return res.status(400).json({ error: 'episodeCount is required for bundle paymentType' });
+      // Example: 10 points per episode
+      const points = episodeCount;
+      user.current_reward_balance += points;
+      await user.save();
+      transaction = await RewardTransaction.create({
+        user_id: user.id,
+        type: 'earn',
+        points,
+        created_at: new Date()
+      });
+      res.json({
+        Name: user.Name,
+        start_date: user.start_date,
+        end_date: user.end_date,
+        points: user.current_reward_balance,
+        login_type: user.login_type,
+        transaction
+      });
+    } else if (paymentType === 'monthly') {
+      if (!startTime || !endTime) return res.status(400).json({ error: 'startTime and endTime are required for monthly paymentType' });
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      user.start_date = start;
+      user.end_date = end;
+      await user.save();
+      transaction = await RewardTransaction.create({
+        user_id: user.id,
+        type: 'spend',
+        points: 0,
+        created_at: new Date()
+      });
+      res.json({
+        Name: user.Name,
+        start_date: user.start_date,
+        end_date: user.end_date,
+        points: user.current_reward_balance,
+        login_type: user.login_type,
+        transaction
+      });
+    } else {
+      return res.status(400).json({ error: 'Invalid paymentType' });
+    }
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Route 3: Verify JWT and get user details
+router.post('/verify-token', async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'token is required' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findByPk(decoded.userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json({ user });
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
 });
 
 export default router;
