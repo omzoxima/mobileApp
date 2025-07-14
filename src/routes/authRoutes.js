@@ -53,23 +53,39 @@ async function getUserFromProvider(provider, token) {
 
 // Route 1: Social Login
 router.post('/social-login', async (req, res) => {
-  const { provider, token } = req.body;
+  const { provider, token, deviceId } = req.body;
   if (!provider || !token) return res.status(400).json({ error: 'provider and token are required' });
   try {
     const { providerId, email, name, providerField } = await getUserFromProvider(provider, token);
-    // Find or create user
-    let where = {};
-    where[providerField] = providerId;
-    let user = await User.findOne({ where });
+    let user;
+    if (deviceId) {
+      user = await User.findOne({ where: { device_id: deviceId } });
+      if (user) {
+        // Update user with provider info
+        user[providerField] = providerId;
+        if (email) user.phone_or_email = email;
+        if (name) user.Name = name;
+        user.login_type = provider;
+        user.is_active = true;
+        await user.save();
+      }
+    }
     if (!user) {
-      user = await User.create({
-        [providerField]: providerId,
-        phone_or_email: email || '',
-        Name: name || '',
-        login_type: provider,
-        is_active: true,
-        current_reward_balance: 0
-      });
+      // Find by provider id
+      let where = {};
+      where[providerField] = providerId;
+      user = await User.findOne({ where });
+      if (!user) {
+        user = await User.create({
+          [providerField]: providerId,
+          phone_or_email: email || '',
+          Name: name || 'Guest User',
+          login_type: provider,
+          is_active: true,
+          current_reward_balance: 0,
+          device_id: deviceId || null
+        });
+      }
     }
     const jwtToken = generateJwt(user);
     res.json({ token: jwtToken, user });
