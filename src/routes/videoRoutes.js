@@ -4,7 +4,7 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 
 
-const { Series, Episode, Category } = models;
+const { Series, Episode, Category,EpisodeBundlePrice } = models;
 const router = express.Router();
 
 

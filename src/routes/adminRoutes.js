@@ -296,6 +296,18 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
   }
 });
  
+// GET /categories (admin only)
+router.get('/categories', async (req, res) => {
+  try {
+    const categories = await models.Category.findAll({
+      attributes: ['id', 'name', 'description','created_at','updated_at']
+    });
+    res.json(categories);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to fetch categories' });
+  }
+});
+ 
 // Upload Endpoint (unchanged from your original)
 router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 10 }]), async (req, res) => {
   let tempDirs = [];
