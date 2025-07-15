@@ -7,32 +7,62 @@ import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
-import jwt from 'jsonwebtoken';
-import bcrypt from 'bcrypt';
-import { uploadToGCS } from '../services/gcsStorage.js';
+import os from 'os';
 
 const { Series, Episode, Category } = models;
 const router = express.Router();
 
+// Configure Express for Cloud Run
+router.use(express.json({ limit: '2gb' }));
+router.use(express.urlencoded({ limit: '2gb', extended: true }));
+
 // Configure FFmpeg
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-// Configure multer
+// Cloud Run-optimized Multer configuration
 const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 } // 1GB
+  storage: multer.diskStorage({
+    destination: async (req, file, cb) => {
+      const tempDir = path.join(os.tmpdir(), 'uploads', uuidv4());
+      try {
+        await fs.mkdir(tempDir, { recursive: true });
+        cb(null, tempDir);
+      } catch (err) {
+        cb(err);
+      }
+    },
+    filename: (req, file, cb) => {
+      cb(null, `${uuidv4()}${path.extname(file.originalname)}`);
+    }
+  }),
+  limits: {
+    fileSize: 1024 * 1024 * 1024, // 1GB
+    files: 10
+  },
+  fileFilter: (req, file, cb) => {
+    const validMimes = [
+      'video/mp4', 
+      'video/quicktime', 
+      'video/x-m4v', 
+      'video/x-matroska',
+      'application/octet-stream'
+    ];
+    cb(null, validMimes.includes(file.mimetype));
+  }
 });
 
-// HLS Conversion Function
-async function convertToHLS(videoBuffer, outputDir) {
-  const tempInputPath = path.join(outputDir, 'input.mp4');
-  await fs.writeFile(tempInputPath, videoBuffer);
-
+/**
+ * Convert video file to HLS format with relative paths
+ * @param {string} inputPath - Path to input video file
+ * @param {string} outputDir - Directory to save HLS files
+ * @returns {Promise<string>} Path to the generated playlist file
+ */
+async function convertToHLS(inputPath, outputDir) {
   const hlsPlaylist = path.join(outputDir, 'playlist.m3u8');
   
   return new Promise((resolve, reject) => {
-    ffmpeg()
-      .input(tempInputPath)
+    const command = ffmpeg()
+      .input(inputPath)
       .inputOptions([
         '-re',
         '-analyzeduration 100M',
@@ -50,15 +80,180 @@ async function convertToHLS(videoBuffer, outputDir) {
         '-start_number 0',
         '-hls_time 10',
         '-hls_list_size 0',
-        '-hls_segment_filename', path.join(outputDir, 'segment_%03d.ts'),
+        '-hls_segment_filename', 'segment_%03d.ts', // Relative path
         '-f hls'
       ])
       .output(hlsPlaylist)
       .on('end', () => resolve(hlsPlaylist))
-      .on('error', (err) => reject(err))
-      .run();
+      .on('error', reject);
+    
+    // Add timeout for Cloud Run
+    const timeout = setTimeout(() => {
+      command.kill('SIGTERM');
+      reject(new Error('Conversion timed out after 10 minutes'));
+    }, 600000); // 10 minutes
+    
+    command.on('end', () => clearTimeout(timeout))
+           .on('error', () => clearTimeout(timeout))
+           .run();
   });
 }
+
+/**
+ * Rewrite HLS playlist to use signed URLs for all segments
+ * @param {string} playlistPath - Path to the original playlist file
+ * @param {string} gcsFolder - GCS folder path where segments are stored
+ * @returns {Promise<string>} The modified playlist content
+ */
+async function rewritePlaylistWithSignedUrls(playlistPath, gcsFolder) {
+  // Read the original playlist
+  let playlistContent = await fs.readFile(playlistPath, 'utf8');
+  
+  // Extract all segment filenames from the playlist
+  const segmentFiles = [];
+  const segmentRegex = /^(segment_\d+\.ts)$/gm;
+  let match;
+  
+  while ((match = segmentRegex.exec(playlistContent)) !== null) {
+    segmentFiles.push(match[1]);
+  }
+  
+  // Generate signed URLs for all segments
+  const signedSegmentUrls = await Promise.all(
+    segmentFiles.map(segmentFile => 
+      getSignedUrl(`${gcsFolder}${segmentFile}`)
+    )
+  );
+  
+  // Replace segment filenames with signed URLs in the playlist
+  segmentFiles.forEach((segmentFile, index) => {
+    const signedUrl = signedSegmentUrls[index];
+    playlistContent = playlistContent.replace(
+      new RegExp(segmentFile, 'g'),
+      signedUrl
+    );
+  });
+  
+  return playlistContent;
+}
+
+/**
+ * Clean up temporary resources
+ * @param {Object} resources - Object containing files and dirs to clean up
+ */
+async function cleanupTempResources({ files = [], dirs = [] }) {
+  const cleanupTasks = [
+    ...files.map(file => 
+      fs.unlink(file).catch(e => console.error('File cleanup error:', e))
+    ),
+    ...dirs.map(dir => 
+      fs.rm(dir, { recursive: true, force: true })
+        .catch(e => console.error('Directory cleanup error:', e))
+    )
+  ];
+  
+  await Promise.all(cleanupTasks);
+}
+
+/**
+ * Upload multilingual videos endpoint
+ */
+router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 10 }]), async (req, res) => {
+  const tempResources = {
+    files: req.files.videos?.map(f => f.path) || [],
+    dirs: []
+  };
+
+  try {
+    // Validate inputs
+    const { title, episode_number, series_id, video_languages } = req.body;
+    if (!episode_number || !series_id) {
+      throw new Error('Episode number and series ID are required');
+    }
+
+    // Parse languages
+    let languages;
+    try {
+      languages = JSON.parse(video_languages);
+      if (!Array.isArray(languages)) throw new Error();
+    } catch {
+      return res.status(400).json({ error: 'Invalid languages format' });
+    }
+
+    // Verify series exists
+    const series = await Series.findByPk(series_id);
+    if (!series) {
+      return res.status(400).json({ error: 'Series not found' });
+    }
+
+    // Process each video file
+    const subtitles = await Promise.all(
+      req.files.videos.map(async (file, i) => {
+        const lang = languages[i];
+        const hlsDir = path.join(os.tmpdir(), 'hls', uuidv4());
+        await fs.mkdir(hlsDir, { recursive: true });
+        tempResources.dirs.push(hlsDir);
+
+        try {
+          // Step 1: Convert video to HLS format
+          await convertToHLS(file.path, hlsDir);
+          
+          // Step 2: Prepare GCS paths
+          const gcsFolder = `hls/${path.basename(hlsDir)}/`;
+          
+          // Step 3: Upload all segments to GCS first
+          await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+          
+          // Step 4: Rewrite playlist with signed URLs for segments
+          const playlistPath = path.join(hlsDir, 'playlist.m3u8');
+          const modifiedPlaylist = await rewritePlaylistWithSignedUrls(playlistPath, gcsFolder);
+          
+          // Step 5: Upload the modified playlist
+          await uploadTextToGCS(modifiedPlaylist, `${gcsFolder}playlist.m3u8`);
+          
+          // Step 6: Generate signed URL for the playlist
+          const playlistSignedUrl = await getSignedUrl(`${gcsFolder}playlist.m3u8`);
+          
+          return {
+            language: lang,
+            gcsPath: `${gcsFolder}playlist.m3u8`,
+            videoUrl: playlistSignedUrl
+          };
+        } catch (error) {
+          console.error(`Error processing ${lang} video:`, error);
+          throw error;
+        }
+      })
+    );
+
+    // Create episode record in database
+    const episode = await Episode.create({
+      title,
+      episode_number,
+      series_id: series.id,
+      description: req.body.episode_description || null,
+      subtitles
+    });
+
+    res.status(201).json({
+      success: true,
+      episode,
+      signedUrls: subtitles.map(s => s.videoUrl)
+    });
+
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({
+      error: 'Video upload failed',
+      details: error.message
+    });
+  } finally {
+    // Clean up temporary files
+    await cleanupTempResources(tempResources);
+  }
+});
+
+//export default router;
 
 // JWT middleware
 function adminAuth(req, res, next) {
@@ -297,7 +492,7 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
 });
 
 // Upload Endpoint (unchanged from your original)
-router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 10 }]), async (req, res) => {
+/*router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 10 }]), async (req, res) => {
   let tempDirs = [];
   
   try {
@@ -405,6 +600,6 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
           .catch(e => console.error('Cleanup error:', e))
     ));
   }
-});
+});*/
 
 export default router;
