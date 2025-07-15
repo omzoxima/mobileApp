@@ -1,4 +1,4 @@
-/*import express from 'express';
+import express from 'express';
 import multer from 'multer';
 import models from '../models/index.js';
 import { uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
@@ -433,8 +433,9 @@ router.delete('/users/:id', async (req, res) => {
   }
 });
  
-export default router;*/
-import express from 'express';
+export default router;
+
+/*import express from 'express';
 import path from 'path';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
@@ -457,7 +458,7 @@ const router = express.Router();
  | 1. Generate a signed GCS *upload* URL so the client can upload big |
  |    files (>32 MB) directly to Cloud Storage.                       |
  * ------------------------------------------------------------------ */
-router.post('/upload-url', async (req, res) => {
+/*router.post('/upload-url', async (req, res) => {
   try {
     const { originalFilename, contentType } = req.body;
     if (!originalFilename || !contentType) {
@@ -479,12 +480,12 @@ router.post('/upload-url', async (req, res) => {
 /* ------------------------------------------------------------------ *
  | 2. Process an episode once all videos are in GCS.                  |
  * ------------------------------------------------------------------ */
-router.post('/upload-multilingual', async (req, res) => {
+/*router.post('/upload-multilingual', async (req, res) => {
   const tempDirs = [];
 
   try {
     /* ------------------------ validate body ----------------------- */
-    const {
+    /*const {
       title,
       episode_number,
       series_id,
@@ -512,13 +513,13 @@ router.post('/upload-multilingual', async (req, res) => {
     }
 
     /* ---------------------- verify series   ----------------------- */
-    const series = await Series.findByPk(series_id);
+    /*const series = await Series.findByPk(series_id);
     if (!series) {
       return res.status(400).json({ error: 'Series not found' });
     }
 
     /* -------------------- process each video ---------------------- */
-    const subtitles = await Promise.all(
+      /*const subtitles = await Promise.all(
       gcsPaths.map(async (gcsPath, i) => {
         const lang   = languages[i];
         const hlsId  = uuidv4();
@@ -527,18 +528,18 @@ router.post('/upload-multilingual', async (req, res) => {
         tempDirs.push(hlsDir);
 
         /* 1. download original video to /tmp */
-        const localInput = path.join(hlsDir, `input${path.extname(gcsPath) || '.mp4'}`);
+          /*const localInput = path.join(hlsDir, `input${path.extname(gcsPath) || '.mp4'}`);
         await downloadFileFromGCS(gcsPath, localInput);
 
         /* 2. convert to HLS */
-        await convertToHLS(localInput, hlsDir);
+         /* await convertToHLS(localInput, hlsDir);
 
         /* 3. upload HLS folder */
-        const gcsFolder = `hls/${hlsId}/`;
+         /* const gcsFolder = `hls/${hlsId}/`;
         await uploadHLSFolderToGCS(hlsDir, gcsFolder);
 
         /* 4. sign segments & playlist */
-        const segmentFiles    = await listSegmentFiles(gcsFolder);
+         /* const segmentFiles    = await listSegmentFiles(gcsFolder);
         const segmentSigned   = {};
         await Promise.all(
           segmentFiles.map(async seg => {
@@ -565,7 +566,7 @@ router.post('/upload-multilingual', async (req, res) => {
     );
 
     /* ---------------------- create episode ----------------------- */
-    const episode = await Episode.create({
+      /*const episode = await Episode.create({
       title,
       episode_number,
       series_id: series.id,
@@ -585,7 +586,7 @@ router.post('/upload-multilingual', async (req, res) => {
     res.status(500).json({ error: 'Video processing failed', details: err.message });
   } finally {
     /* ------------- clean up tmp dirs even on failure ------------- */
-    await Promise.all(
+     /* await Promise.all(
       tempDirs.map(d => fs.rm(d, { recursive: true, force: true })
         .catch(e => console.error('Cleanup error:', e)))
     );
@@ -593,7 +594,7 @@ router.post('/upload-multilingual', async (req, res) => {
 });
 
 /* ---------- (optional) keep your admin delete route ------------ */
-router.delete('/users/:id', async (req, res) => {
+  /*router.delete('/users/:id', async (req, res) => {
   try {
     const user = await models.User.findByPk(req.params.id);
     if (!user) return res.status(404).json({ error: 'User not found' });
@@ -604,4 +605,4 @@ router.delete('/users/:id', async (req, res) => {
   }
 });
 
-export default router;
+export default router;*/
