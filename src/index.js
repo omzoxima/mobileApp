@@ -10,8 +10,8 @@ import cors from 'cors';
 const app = express();
 app.use(cors());  
 // Middleware
-app.use(express.json({ limit: '1024mb' }));
-app.use(express.urlencoded({ limit: '1024mb', extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Routes
 app.use('/api', videoRoutes);

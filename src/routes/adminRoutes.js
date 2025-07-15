@@ -1,4 +1,4 @@
-import express from 'express';
+/*import express from 'express';
 import multer from 'multer';
 import models from '../models/index.js';
 import { uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
@@ -433,4 +433,175 @@ router.delete('/users/:id', async (req, res) => {
   }
 });
  
+export default router;*/
+import express from 'express';
+import path from 'path';
+import fs from 'fs/promises';
+import { v4 as uuidv4 } from 'uuid';
+import models from '../models/index.js';
+import {
+  getSignedUploadUrl,
+  getSignedUrl,
+  uploadHLSFolderToGCS,
+  listSegmentFiles,
+  downloadFromGCS,
+  uploadTextToGCS,
+  downloadFileFromGCS
+} from '../services/gcsStorage.js';
+import { convertToHLS } from '../utils/ffmpeg.js';
+
+const { Series, Episode } = models;
+const router = express.Router();
+
+/* ------------------------------------------------------------------ *
+ | 1. Generate a signed GCS *upload* URL so the client can upload big |
+ |    files (>32 MB) directly to Cloud Storage.                       |
+ * ------------------------------------------------------------------ */
+router.post('/upload-url', async (req, res) => {
+  try {
+    const { originalFilename, contentType } = req.body;
+    if (!originalFilename || !contentType) {
+      return res.status(400).json({ error: 'originalFilename and contentType required' });
+    }
+
+    const ext = path.extname(originalFilename) || '.mp4';
+    const id  = uuidv4();
+    const gcsPath = `raw-videos/${id}${ext}`;
+
+    const signedUrl = await getSignedUploadUrl(gcsPath, contentType, 15); // 15 min expiry
+    return res.json({ signedUrl, gcsPath, bucket: 'run-sources-tuktuki-464514-asia-south1' });
+  } catch (err) {
+    console.error('Signed‑URL error:', err);
+    res.status(500).json({ error: 'Failed to create upload URL', details: err.message });
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ | 2. Process an episode once all videos are in GCS.                  |
+ * ------------------------------------------------------------------ */
+router.post('/upload-multilingual', async (req, res) => {
+  const tempDirs = [];
+
+  try {
+    /* ------------------------ validate body ----------------------- */
+    const {
+      title,
+      episode_number,
+      series_id,
+      video_languages,
+      video_gcs_paths,              // new!
+      episode_description = null,
+      reward_cost_points  = 0
+    } = req.body;
+
+    if (!episode_number || !series_id || !video_languages || !video_gcs_paths) {
+      return res.status(400).json({ error: 'episode_number, series_id, video_languages, video_gcs_paths required' });
+    }
+
+    let languages, gcsPaths;
+    try {
+      languages = JSON.parse(video_languages);
+      gcsPaths  = JSON.parse(video_gcs_paths);
+      if (!Array.isArray(languages) || !Array.isArray(gcsPaths)) throw new Error();
+    } catch {
+      return res.status(400).json({ error: 'video_languages and video_gcs_paths must be JSON arrays' });
+    }
+
+    if (languages.length !== gcsPaths.length) {
+      return res.status(400).json({ error: 'Video path count must equal language count' });
+    }
+
+    /* ---------------------- verify series   ----------------------- */
+    const series = await Series.findByPk(series_id);
+    if (!series) {
+      return res.status(400).json({ error: 'Series not found' });
+    }
+
+    /* -------------------- process each video ---------------------- */
+    const subtitles = await Promise.all(
+      gcsPaths.map(async (gcsPath, i) => {
+        const lang   = languages[i];
+        const hlsId  = uuidv4();
+        const hlsDir = path.join('/tmp', hlsId);
+        await fs.mkdir(hlsDir, { recursive: true });
+        tempDirs.push(hlsDir);
+
+        /* 1. download original video to /tmp */
+        const localInput = path.join(hlsDir, `input${path.extname(gcsPath) || '.mp4'}`);
+        await downloadFileFromGCS(gcsPath, localInput);
+
+        /* 2. convert to HLS */
+        await convertToHLS(localInput, hlsDir);
+
+        /* 3. upload HLS folder */
+        const gcsFolder = `hls/${hlsId}/`;
+        await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+
+        /* 4. sign segments & playlist */
+        const segmentFiles    = await listSegmentFiles(gcsFolder);
+        const segmentSigned   = {};
+        await Promise.all(
+          segmentFiles.map(async seg => {
+            segmentSigned[seg] = await getSignedUrl(seg, 60 * 24 * 7); // 7 days
+          })
+        );
+
+        const playlistPath   = `${gcsFolder}playlist.m3u8`;
+        let playlistText     = await downloadFromGCS(playlistPath);
+        playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm,
+          m => segmentSigned[`${gcsFolder}${m}`] || m
+        );
+
+        await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
+
+        const signedPlaylist = await getSignedUrl(playlistPath, 60 * 24 * 7);
+
+        return {
+          language: lang,
+          gcsPath: playlistPath,
+          videoUrl: signedPlaylist
+        };
+      })
+    );
+
+    /* ---------------------- create episode ----------------------- */
+    const episode = await Episode.create({
+      title,
+      episode_number,
+      series_id: series.id,
+      description: episode_description,
+      reward_cost_points,
+      subtitles
+    });
+
+    res.status(201).json({
+      success: true,
+      episode,
+      signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
+    });
+
+  } catch (err) {
+    console.error('Episode upload error:', err);
+    res.status(500).json({ error: 'Video processing failed', details: err.message });
+  } finally {
+    /* ------------- clean up tmp dirs even on failure ------------- */
+    await Promise.all(
+      tempDirs.map(d => fs.rm(d, { recursive: true, force: true })
+        .catch(e => console.error('Cleanup error:', e)))
+    );
+  }
+});
+
+/* ---------- (optional) keep your admin delete route ------------ */
+router.delete('/users/:id', async (req, res) => {
+  try {
+    const user = await models.User.findByPk(req.params.id);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    await user.destroy();
+    res.json({ message: 'User deleted successfully' });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'Failed to delete user' });
+  }
+});
+
 export default router;

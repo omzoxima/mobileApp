@@ -89,11 +89,7 @@ router.get('/profile', async (req, res) => {
       }
 
       // Debug log for profile, points, and tasks
-      console.log('PROFILE DEBUG:', {
-        user: user.toJSON(),
-        pointsGranted,
-        appOpenTasks: appOpenTasks.map(t => t.toJSON())
-      });
+    
 
       if (transactions.length > 0) {
         await user.increment('current_reward_balance', {
