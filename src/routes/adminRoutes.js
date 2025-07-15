@@ -20,7 +20,7 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 // Configure multer
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 } // 1GB
+  limits: { fileSize: 1024 * 1024 * 1024 * 1024 } // 1GB
 });
  
 // HLS Conversion Function
