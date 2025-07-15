@@ -168,7 +168,7 @@ router.get('/admins', async (req, res) => {
   try {
     const admins = await models.User.findAll({
       where: { role: 'admin' },
-      attributes: ['role', 'phone_or_email', 'Name', 'created_at', 'updated_at']
+      attributes: ['id','role', 'phone_or_email', 'Name', 'created_at', 'updated_at']
     });
     res.json(admins);
   } catch (error) {
