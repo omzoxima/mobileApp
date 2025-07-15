@@ -418,5 +418,19 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
     ));
   }
 });
+
+// DELETE /users/:id (admin only)
+router.delete('/users/:id', async (req, res) => {
+  try {
+    const user = await models.User.findByPk(req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    await user.destroy();
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to delete user' });
+  }
+});
  
 export default router;
