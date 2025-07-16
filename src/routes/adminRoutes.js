@@ -356,29 +356,53 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
     if (!title || !category_id) {
       return res.status(400).json({ error: 'Title and category_id are required' });
     }
-
+ 
     let thumbnail_url = null;
     if (req.file) {
+      // Check if it's an image file
       const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-      if (!imageTypes.includes(req.file.mimetype)) {
-        return res.status(400).json({ error: 'Thumbnail must be an image' });
+      
+      if (imageTypes.includes(req.file.mimetype)) {
+        // For images, use simple signed URL
+        const gcsPath = await uploadToGCS(req.file, 'thumbnails');
+        thumbnail_url = await getSignedUrl(gcsPath); // 10 years
+      } else {
+        // For video files, use HLS conversion
+        const hlsId = uuidv4();
+        const hlsDir = path.join('/tmp', hlsId);
+        
+        await fs.mkdir(hlsDir, { recursive: true });
+ 
+        try {
+          const playlistName = await convertToHLS(req.file.buffer, hlsDir);
+          const gcsFolder = `thumbnails/${hlsId}/`;
+          await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+          
+          const playlistPath = `${gcsFolder}playlist.m3u8`;
+          const signedUrl = await getSignedUrl(playlistPath); // 10 years
+ 
+          thumbnail_url = signedUrl;
+        } catch (error) {
+          console.error('Error processing thumbnail:', error);
+          throw error;
+        } finally {
+          // Cleanup
+          await fs.rm(hlsDir, { recursive: true, force: true })
+            .catch(e => console.error('Cleanup error:', e));
+        }
       }
-      const gcsPath = `thumbnails/${uuidv4()}/${req.file.originalname}`;
-      await streamUploadToGCS(req.file.buffer, req.file.originalname, req.file.mimetype);
-      thumbnail_url = await getSignedUrl(gcsPath, 315360000); // 10 years
     }
-
-    const newSeries = await Series.create({ title, category_id, thumbnail_url });
+ 
+    const newSeries = await models.Series.create({ title, category_id, thumbnail_url });
     res.status(201).json({
       uuid: newSeries.id,
       title: newSeries.title,
-      thumbnail_url: thumbnail_url,
+      thumbnail_url: thumbnail_url
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create series' });
+    res.status(500).json({ error: error.message || 'Failed to create series' });
   }
 });
-
 // GET /categories
 router.get('/categories', async (req, res) => {
   try {
