@@ -1,13 +1,6 @@
 import express from 'express';
 import models from '../models/index.js';
-import { 
-  generateSignedUrl, 
-  getSignedUrl, 
-  listSegmentFiles, 
-  downloadFromGCS, 
-  uploadTextToGCS,
-  streamToGCS
-} from '../services/gcsStorage.js';
+
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
