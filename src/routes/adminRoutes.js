@@ -9,7 +9,7 @@ import fsp from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { PassThrough } from 'stream';
-const { Storage } = require('@google-cloud/storage');
+import { Storage } from '@google-cloud/storage';
 
 import os from 'os';
 import multer from 'multer';
