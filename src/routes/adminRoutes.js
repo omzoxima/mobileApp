@@ -107,10 +107,10 @@ router.post('/process-video', async (req, res) => {
       ffmpeg(videoUrl)
         .inputOptions([
           '-re',
-          '-threads 1',
-          '-max_muxing_queue_size 1024'
+          '-threads 1'
         ])
         .outputOptions([
+          '-max_muxing_queue_size 1024',
           '-c:v libx264',
           '-profile:v baseline',
           '-level 3.0',
