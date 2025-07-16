@@ -90,6 +90,7 @@ router.post('/process-video', async (req, res) => {
 
       // Get signed URL for the video file in GCS
       const signedUrl = await getSignedUrl(fileName);
+      console.log('FFmpeg input signedUrl:', signedUrl);
 
       // Process video directly to GCS using streams
       const segmentStreams = new Map();
