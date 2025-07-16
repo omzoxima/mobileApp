@@ -205,6 +205,7 @@ router.get('/series', async (req, res) => {
 // GET /series/:id
 router.get('/series/:id', async (req, res) => {
   try {
+    //console.log('Requested series id:', req.params.id);
     const series = await Series.findByPk(req.params.id, {
       include: [
         { model: Category, attributes: ['name'] },
@@ -216,6 +217,7 @@ router.get('/series/:id', async (req, res) => {
       ],
       attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at']
     });
+    //console.log('Series found:', series);
 
     if (!series) return res.status(404).json({ error: 'Series not found' });
 
@@ -225,7 +227,7 @@ router.get('/series/:id', async (req, res) => {
       thumbnail_url: series.thumbnail_url,
       created_at: series.created_at,
       updated_at: series.updated_at,
-      category_name: series.Category ? s.Category.name : null,
+      category_name: series.Category ? series.Category.name : null,
       episodes: series.Episodes ? series.Episodes.map(e => ({
         title: e.title,
         episode_number: e.episode_number,
@@ -233,6 +235,7 @@ router.get('/series/:id', async (req, res) => {
       })) : []
     });
   } catch (error) {
+    console.error('Error in GET /series/:id:', error);
     res.status(500).json({ error: 'Failed to fetch series details' });
   }
 });
