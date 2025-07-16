@@ -92,8 +92,12 @@ router.post('/upload-url', async (req, res) => {
     const { url, destination } = await initiateResumableUpload(fileName);
     res.json({ url, destination });
   } catch (error) {
-    console.error('Error initiating resumable upload:', error);
-    res.status(500).json({ error: 'Failed to initiate resumable upload' });
+    console.error('Error in /upload-url endpoint:', {
+      message: error.message,
+      stack: error.stack,
+      requestBody: req.body,
+    });
+    res.status(500).json({ error: `Failed to initiate resumable upload: ${error.message}` });
   }
 });
 
