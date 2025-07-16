@@ -20,7 +20,7 @@ ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 // Configure multer
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 * 1024 } // 1GB
+  limits: { fileSize: 500 * 1024 * 1024 } // 500MB max per video
 });
  
 // HLS Conversion Function
@@ -432,6 +432,80 @@ router.delete('/users/:id', async (req, res) => {
     res.status(500).json({ error: error.message || 'Failed to delete user' });
   }
 });
+
+
+
+
+router.post('/upload-direct-gcs', upload.array('videos', 10), async (req, res) => {
+  let tempDirs = [];
+  try {
+    const { title, episode_number, series_id, video_languages } = req.body;
+    if (!episode_number || !series_id || !video_languages) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    let languages;
+    try {
+      languages = JSON.parse(video_languages);
+      if (!Array.isArray(languages)) throw new Error();
+    } catch {
+      return res.status(400).json({ error: 'Invalid languages format' });
+    }
+
+    const videoFiles = req.files || [];
+    if (videoFiles.length !== languages.length) {
+      return res.status(400).json({ error: 'Mismatch between videos and languages' });
+    }
+
+    const series = await Series.findByPk(series_id);
+    if (!series) return res.status(404).json({ error: 'Series not found' });
+
+    const subtitles = await Promise.all(videoFiles.map(async (file, i) => {
+      const lang = languages[i];
+      const hlsId = uuidv4();
+      const hlsDir = path.join('/tmp', hlsId);
+      await fs.mkdir(hlsDir, { recursive: true });
+      tempDirs.push(hlsDir);
+
+      const playlistName = await convertToHLS(file.buffer, hlsDir);
+      const gcsFolder = `hls/${hlsId}/`;
+      await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+
+      const segmentFiles = await listSegmentFiles(gcsFolder);
+      const segmentSignedUrls = {};
+      await Promise.all(segmentFiles.map(async seg => {
+        segmentSignedUrls[seg] = await getSignedUrl(seg, 60 * 24 * 7);
+      }));
+
+      const playlistPath = `${gcsFolder}playlist.m3u8`;
+      let playlistText = await downloadFromGCS(playlistPath);
+      playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, match => segmentSignedUrls[`${gcsFolder}${match}`] || match);
+      await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
+      const signedUrl = await getSignedUrl(playlistPath);
+
+      return { language: lang, gcsPath: playlistPath, videoUrl: signedUrl };
+    }));
+
+    const episode = await Episode.create({
+      title,
+      episode_number,
+      series_id: series.id,
+      subtitles
+    });
+
+    res.status(201).json({
+      success: true,
+      episode,
+      signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
+    });
+  } catch (error) {
+    console.error('Direct upload error:', error);
+    res.status(500).json({ error: error.message || 'Direct upload failed' });
+  } finally {
+    await Promise.all(tempDirs.map(dir => fs.rm(dir, { recursive: true, force: true }).catch(() => {})));
+  }
+});
+
  
 export default router;
 
