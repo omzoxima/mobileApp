@@ -88,6 +88,9 @@ router.post('/process-video', async (req, res) => {
       // Create a stream to download the original video (if needed)
       // In this implementation, we'll process directly from GCS using streams
 
+      // Get signed URL for the video file in GCS
+      const signedUrl = await getSignedUrl(fileName);
+
       // Process video directly to GCS using streams
       const segmentStreams = new Map();
       const segmentUploadPromises = [];
@@ -101,7 +104,7 @@ router.post('/process-video', async (req, res) => {
       const bucketName ='run-sources-tuktuki-464514-asia-south1';
       await new Promise((resolve, reject) => {
         const ffmpegCommand = ffmpeg()
-          .input(`gs://${bucketName}/${fileName}`) // Stream directly from GCS
+          .input(signedUrl) // Stream from GCS using signed HTTPS URL
           .inputOptions([
             '-re',
             '-analyzeduration 100M',
