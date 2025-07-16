@@ -11,7 +11,7 @@ export async function generateSignedUrl(fileName, contentType, expiresInMinutes 
     version: 'v4',
     action,
     expires: Date.now() + expiresInMinutes * 60 * 1000,
-    contentType
+  
    
   };
 
