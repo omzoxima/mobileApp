@@ -11,10 +11,8 @@ export async function generateSignedUrl(fileName, contentType, expiresInMinutes 
     version: 'v4',
     action,
     expires: Date.now() + expiresInMinutes * 60 * 1000,
-    contentType,
-    extensionHeaders: action === 'write' ? {
-      'x-goog-content-length-range': '0,1073741824' // 0-1GB limit
-    } : undefined
+    contentType
+   
   };
 
   const [url] = await storage
