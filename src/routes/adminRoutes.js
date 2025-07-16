@@ -138,7 +138,7 @@ router.post('/upload-episode', upload.fields([{ name: 'videos', maxCount: 10 }])
             })
           );
           let playlistText = await downloadFromGCS(playlistPath);
-          playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
+          playlistText = playlistText.toString().replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
           await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
           const signedUrl = await getSignedUrl(playlistPath, 3600);
 
@@ -249,7 +249,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
       })
     );
     let playlistText = await downloadFromGCS(subtitle.gcsPath);
-    playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
+    playlistText = playlistText.toString().replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
     await uploadTextToGCS(subtitle.gcsPath, playlistText, 'application/x-mpegURL');
     const signedUrl = await getSignedUrl(subtitle.gcsPath, 3600);
 
@@ -318,7 +318,7 @@ router.get('/series/:id', async (req, res) => {
       title: series.title,
       thumbnail_url: series.thumbnail_url,
       created_at: series.created_at,
-      updated_at: series.updated_at,
+      updated_at: s.updated_at,
       category_name: series.Category ? series.Category.name : null,
       episodes: series.Episodes
         ? series.Episodes.map((e) => ({
