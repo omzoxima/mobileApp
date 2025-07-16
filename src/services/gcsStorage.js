@@ -1,18 +1,20 @@
+// gcstorage.js
 import { Storage } from '@google-cloud/storage';
-import path from 'path';
 import { PassThrough } from 'stream';
 
 const storage = new Storage();
+const bucketName = 'run-sources-tuktuki-464514-asia-south1';
 
-const bucketName ='run-sources-tuktuki-464514-asia-south1';
-
-// Generate signed URL for direct upload
-export async function generateSignedUrl(fileName, contentType, expiresInMinutes = 100) {
+// Generate signed URL with additional security
+export async function generateSignedUrl(fileName, contentType, expiresInMinutes = 15, action = 'write') {
   const options = {
     version: 'v4',
-    action: 'write',
+    action,
     expires: Date.now() + expiresInMinutes * 60 * 1000,
     contentType,
+    extensionHeaders: action === 'write' ? {
+      'x-goog-content-length-range': '0,1073741824' // 0-1GB limit
+    } : undefined
   };
 
   const [url] = await storage
@@ -22,65 +24,61 @@ export async function generateSignedUrl(fileName, contentType, expiresInMinutes 
 
   return url;
 }
-// Add to gcsStorage.js
-export async function downloadFromGCS(filePath) {
-  const file = storage.bucket(bucketName).file(filePath);
-  const [content] = await file.download();
-  return content.toString('utf-8');
-}
-// Stream data directly to GCS
-export async function streamToGCS(destinationPath, readStream, contentType) {
-  const writeStream = storage
-    .bucket(bucketName)
-    .file(destinationPath)
-    .createWriteStream({
-      metadata: {
-        contentType: contentType || 'application/octet-stream'
-      },
-      resumable: false
-    });
+
+// Improved stream handling with progress
+export async function streamToGCS(destinationPath, readStream, contentType, onProgress) {
+  const file = storage.bucket(bucketName).file(destinationPath);
+  const writeStream = file.createWriteStream({
+    metadata: { contentType: contentType || 'application/octet-stream' },
+    resumable: false
+  });
 
   return new Promise((resolve, reject) => {
+    let bytesWritten = 0;
+    
     readStream
+      .on('data', (chunk) => {
+        bytesWritten += chunk.length;
+        if (onProgress) onProgress(bytesWritten);
+      })
       .on('error', reject)
       .pipe(writeStream)
       .on('error', reject)
-      .on('finish', resolve);
+      .on('finish', () => resolve(destinationPath));
   });
 }
 
-// Get signed URL for reading
-export async function getSignedUrl(filePath, expiresInMinutes = 60 * 24 * 7) {
-  const options = {
-    version: 'v4',
-    action: 'read',
-    expires: Date.now() + expiresInMinutes * 60 * 1000,
-  };
-
-  const [url] = await storage
-    .bucket(bucketName)
-    .file(filePath)
-    .getSignedUrl(options);
-
-  return url;
-}
-
-// Upload text content to GCS
-export async function uploadTextToGCS(filePath, content, contentType) {
-  await storage.bucket(bucketName).file(filePath).save(content, {
-    metadata: {
-      contentType: contentType || 'text/plain'
-    }
+// Upload with automatic content type detection
+export async function uploadToGCS(filePath, localPath, contentType) {
+  await storage.bucket(bucketName).upload(localPath, {
+    destination: filePath,
+    metadata: { contentType },
+    resumable: false
   });
+  return filePath;
 }
 
-// List segment files in a GCS folder
-export async function listSegmentFiles(folderPath) {
+// Get public URL if available or signed URL
+export async function getFileUrl(filePath, expiresInMinutes = 60 * 24) {
+  const [metadata] = await storage.bucket(bucketName).file(filePath).getMetadata();
+  
+  if (metadata.acl?.some(rule => rule.entity === 'allUsers' && rule.role === 'READER')) {
+    return `https://storage.googleapis.com/${bucketName}/${filePath}`;
+  }
+  
+  return generateSignedUrl(filePath, metadata.contentType, expiresInMinutes, 'read');
+}
+
+// Delete files
+export async function deleteFromGCS(filePath) {
+  await storage.bucket(bucketName).file(filePath).delete();
+}
+
+// List files with pagination
+export async function listFiles(prefix, maxResults = 100) {
   const [files] = await storage.bucket(bucketName).getFiles({
-    prefix: folderPath
+    prefix,
+    maxResults
   });
-
-  return files
-    .filter(file => file.name.endsWith('.ts'))
-    .map(file => file.name);
+  return files;
 }
