@@ -15,21 +15,16 @@ export async function initiateResumableUpload(fileName) {
     if (!fileName) {
       throw new Error('fileName is required');
     }
-
     const destination = `uploads/${uuidv4()}/${fileName}`;
     const file = storage.bucket(bucketName).file(destination);
-    
-    // Verify bucket exists
     try {
       await storage.bucket(bucketName).getMetadata();
     } catch (err) {
       throw new Error(`Bucket ${bucketName} not found or inaccessible: ${err.message}`);
     }
-
     const [url] = await file.createResumableUpload({
-      metadata: { contentType: 'video/mp4' }, // Default to video/mp4, adjust if needed
+      metadata: { contentType: 'video/mp4' },
     });
-
     return { url, destination };
   } catch (error) {
     console.error('Error in initiateResumableUpload:', {
