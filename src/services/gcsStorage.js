@@ -7,7 +7,7 @@ const storage = new Storage();
 const bucketName ='run-sources-tuktuki-464514-asia-south1';
 
 // Generate signed URL for direct upload
-export async function generateSignedUrl(fileName, contentType, expiresInMinutes = 30) {
+export async function generateSignedUrl(fileName, contentType, expiresInMinutes = 100) {
   const options = {
     version: 'v4',
     action: 'write',

@@ -16,6 +16,8 @@ import fsp from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { PassThrough } from 'stream';
+const { Storage } = require('@google-cloud/storage');
+
 import os from 'os';
 import multer from 'multer';
 
@@ -30,205 +32,386 @@ const upload = multer({
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
 // JWT middleware (same as before)
+const storage = new Storage();
+const BUCKET_NAME = 'run-sources-tuktuki-464514-asia-south1';
+const MAX_RETRIES = 3;
+const SEGMENT_DURATION = 10; // seconds
 
-
-// Generate signed URL for direct upload (same as before)
-router.post('/generate-upload-url', async (req, res) => {
-  try {
-    const { contentType, language } = req.body;
-    if (!contentType || !language) {
-      return res.status(400).json({ error: 'contentType and language are required' });
-    }
-
-    const fileId = uuidv4();
-    const fileExtension = contentType.split('/')[1] || 'mp4';
-    const fileName = `uploads/${fileId}.${fileExtension}`;
-
-    const signedUrl = await generateSignedUrl(fileName, contentType);
-    
-    res.json({
-      signedUrl,
-      fileId,
-      fileName,
-      language
+// Helper function to generate signed URL
+const generateSignedUrl = async (filePath, action = 'read', expiresMinutes = 30) => {
+  const [url] = await storage.bucket(BUCKET_NAME)
+    .file(filePath)
+    .getSignedUrl({
+      version: 'v4',
+      action,
+      expires: Date.now() + expiresMinutes * 60 * 1000,
     });
-  } catch (error) {
-    console.error('Error generating upload URL:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate upload URL' });
-  }
-});
+  return url;
+};
 
-// Process uploaded video and create HLS (improved version)
+// Process video with FFmpeg with memory limits
+const processVideoToHLS = async ({ inputPath, outputDir }) => {
+  return new Promise((resolve, reject) => {
+    const playlistPath = path.join(outputDir, 'playlist.m3u8');
+    const segmentPattern = path.join(outputDir, 'segment_%03d.ts');
+
+    console.log(`Starting FFmpeg processing for ${inputPath}`);
+
+    const command = ffmpeg()
+      .input(inputPath)
+      .inputOptions([
+        '-re',
+        '-threads 1', // Reduce threads to prevent memory issues
+        '-max_muxing_queue_size 1024',
+        '-max_alloc 5000000' // 5MB memory limit
+      ])
+      .outputOptions([
+        '-c:v libx264',
+        '-profile:v baseline',
+        '-level 3.0',
+        '-pix_fmt yuv420p',
+        '-preset fast',
+        '-crf 23',
+        '-movflags +faststart',
+        '-c:a aac',
+        '-b:a 128k',
+        `-hls_time ${SEGMENT_DURATION}`,
+        '-hls_list_size 0',
+        '-hls_segment_filename', segmentPattern,
+        '-f hls'
+      ])
+      .output(playlistPath)
+      .on('start', (commandLine) => {
+        console.log('FFmpeg command:', commandLine);
+      })
+      .on('progress', (progress) => {
+        console.log(`Processing: ${progress.timemark}`);
+      })
+      .on('end', () => {
+        console.log('FFmpeg processing completed successfully');
+        resolve({
+          playlistPath,
+          segmentPattern
+        });
+      })
+      .on('error', (err, stdout, stderr) => {
+        console.error('FFmpeg error:', err);
+        console.error('FFmpeg stdout:', stdout);
+        console.error('FFmpeg stderr:', stderr);
+        reject(new Error(`Video processing failed: ${err.message}`));
+      });
+
+    command.run();
+  });
+};
+
+// Upload file with retry logic
+const uploadFileWithRetry = async (localPath, gcsPath, contentType) => {
+  const bucket = storage.bucket(BUCKET_NAME);
+  
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`Upload attempt ${attempt} for ${gcsPath}`);
+      await bucket.upload(localPath, {
+        destination: gcsPath,
+        metadata: { contentType },
+        resumable: false
+      });
+      return gcsPath;
+    } catch (err) {
+      console.error(`Attempt ${attempt} failed:`, err.message);
+      if (attempt === MAX_RETRIES) throw err;
+      await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
+    }
+  }
+};
+
+// Main processing endpoint
 router.post('/process-video', async (req, res) => {
+  let tempDir;
   try {
-    const { fileId, fileName, language, seriesId, episodeData } = req.body;
+    const { gcsPath, fileId, language, seriesId, episodeData } = req.body;
     
-    if (!fileId || !fileName || !language || !seriesId || !episodeData) {
-      return res.status(400).json({ error: 'Missing required fields' });
+    // Validation
+    if (!gcsPath || !fileId || !language || !seriesId || !episodeData) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['gcsPath', 'fileId', 'language', 'seriesId', 'episodeData']
+      });
     }
 
     // Verify series exists
     const series = await Series.findByPk(seriesId);
     if (!series) {
-      return res.status(400).json({ error: 'Series not found' });
+      return res.status(404).json({ 
+        error: 'Series not found',
+        availableSeries: await Series.findAll({ attributes: ['id', 'title'] })
+      });
     }
 
-    // Create temp directory in system temp folder
-    const tempDir = path.join(os.tmpdir(), `video-process-${fileId}`);
-    await fsp.mkdir(tempDir, { recursive: true });
-    
+    // Create temp directory
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `video-${fileId}-`));
     const hlsDir = path.join(tempDir, 'hls');
-    await fsp.mkdir(hlsDir, { recursive: true });
+    await fs.mkdir(hlsDir, { recursive: true });
 
-    try {
-      const gcsFolder = `hls/${fileId}/`;
-      const originalVideoPath = path.join(tempDir, 'original.mp4');
-      const playlistPath = path.join(hlsDir, 'playlist.m3u8');
+    // Generate signed URL for the source video
+    const videoUrl = await generateSignedUrl(gcsPath, 'read', 30);
 
-      // Create a stream to download the original video (if needed)
-      // In this implementation, we'll process directly from GCS using streams
+    // Process video to HLS format
+    await processVideoToHLS({
+      inputPath: videoUrl,
+      outputDir: hlsDir
+    });
 
-      // Get signed URL for the video file in GCS
-      const signedUrl = await getSignedUrl(fileName);
-      console.log('FFmpeg input signedUrl:', signedUrl);
+    // Upload processed files
+    const files = await fs.readdir(hlsDir);
+    const gcsPrefix = `processed/${fileId}/hls/`;
+    const uploadResults = [];
 
-      // Process video directly to GCS using streams
-      const segmentStreams = new Map();
-      const segmentUploadPromises = [];
-
-      // Create a transform stream for each segment
-      const segmentNameTemplate = 'segment_%03d.ts';
-      const segmentPathTemplate = path.join(hlsDir, segmentNameTemplate);
-
-      // Create playlist write stream
-      const playlistWriteStream = fs.createWriteStream(playlistPath);
-      const bucketName ='run-sources-tuktuki-464514-asia-south1';
-      await new Promise((resolve, reject) => {
-        const ffmpegCommand = ffmpeg()
-          .input(signedUrl) // Stream from GCS using signed HTTPS URL
-          .inputOptions([
-            '-re',
-            '-analyzeduration 100M',
-            '-probesize 100M'
-          ])
-          .outputOptions([
-            '-c:v libx264',
-            '-profile:v baseline',
-            '-level 3.0',
-            '-pix_fmt yuv420p',
-            '-preset fast',
-            '-crf 23',
-            '-c:a aac',
-            '-b:a 128k',
-            '-start_number 0',
-            '-hls_time 10',
-            '-hls_list_size 0',
-            '-hls_segment_filename', segmentPathTemplate,
-            '-f hls'
-          ])
-          .output(playlistPath)
-          .on('start', (commandLine) => {
-            console.log('FFmpeg command:', commandLine);
-          })
-          .on('progress', (progress) => {
-            console.log(`Processing: ${progress.percent}% done`);
-          })
-          .on('error', (err) => {
-            console.error('FFmpeg error:', err);
-            reject(err);
-          })
-          .on('end', async () => {
-            console.log('FFmpeg processing finished');
-            
-            // Upload playlist file
-            const playlistGcsPath = `${gcsFolder}playlist.m3u8`;
-            await uploadTextToGCS(playlistGcsPath, await fsp.readFile(playlistPath, 'utf-8'), 'application/x-mpegURL');
-            
-            // Generate signed URL for playlist
-            const signedUrl = await getSignedUrl(playlistGcsPath);
-            
-            resolve({
-              playlistGcsPath,
-              signedUrl
-            });
-          });
-
-        // Handle segment creation events
-        ffmpegCommand.on('filenames', (filenames) => {
-          filenames.forEach((filename) => {
-            const segmentPath = path.join(hlsDir, filename);
-            const segmentGcsPath = `${gcsFolder}${filename}`;
-            
-            // Create a write stream that uploads to GCS as it receives data
-            const segmentStream = fs.createReadStream(segmentPath).on('error', reject);
-            const uploadPromise = streamToGCS(segmentGcsPath, segmentStream, 'video/MP2T');
-            segmentUploadPromises.push(uploadPromise);
-          });
-        });
-
-        ffmpegCommand.run();
-      });
-
-      // Wait for all segment uploads to complete
-      await Promise.all(segmentUploadPromises);
-
-      // Create or update episode
-      const episodeNumber = parseInt(episodeData.episode_number);
-      let episode = await Episode.findOne({
-        where: { series_id: seriesId, episode_number: episodeNumber }
-      });
-
-      const subtitleData = {
-        language,
-        gcsPath: `${gcsFolder}playlist.m3u8`,
-        videoUrl: await getSignedUrl(`${gcsFolder}playlist.m3u8`)
-      };
-
-      if (!episode) {
-        // Create new episode
-        episode = await Episode.create({
-          title: episodeData.title,
-          episode_number: episodeNumber,
-          series_id: seriesId,
-          description: episodeData.description || null,
-          reward_cost_points: episodeData.reward_cost_points || 0,
-          subtitles: [subtitleData]
-        });
-      } else {
-        // Update existing episode
-        const existingSubtitles = Array.isArray(episode.subtitles) ? episode.subtitles : [];
-        const updatedSubtitles = existingSubtitles.filter(s => s.language !== language);
-        updatedSubtitles.push(subtitleData);
-        
-        await episode.update({
-          subtitles: updatedSubtitles,
-          ...(episodeData.title && { title: episodeData.title }),
-          ...(episodeData.description && { description: episodeData.description }),
-          ...(episodeData.reward_cost_points && { reward_cost_points: episodeData.reward_cost_points })
-        });
-      }
-
-      res.json({
-        success: true,
-        episode,
-        signedUrl: subtitleData.videoUrl
-      });
-    } finally {
-      // Clean up temp files
+    // Upload files sequentially to avoid memory issues
+    for (const file of files) {
       try {
-        await fsp.rm(tempDir, { recursive: true, force: true });
+        const localPath = path.join(hlsDir, file);
+        const remotePath = `${gcsPrefix}${file}`;
+        const contentType = file.endsWith('.m3u8') 
+          ? 'application/x-mpegURL' 
+          : 'video/MP2T';
+
+        const uploadedPath = await uploadFileWithRetry(localPath, remotePath, contentType);
+        uploadResults.push(uploadedPath);
+        console.log(`Uploaded ${file} to ${uploadedPath}`);
       } catch (err) {
-        console.error('Error cleaning up temp files:', err);
+        console.error(`Failed to upload ${file}:`, err);
+        throw new Error(`Failed to upload ${file}: ${err.message}`);
       }
     }
+
+    // Get the playlist URL
+    const playlistPath = `${gcsPrefix}playlist.m3u8`;
+    const playlistUrl = await generateSignedUrl(playlistPath, 'read', 60 * 24 * 7); // 1 week expiry
+
+    // Create/update episode
+    const episodeNumber = parseInt(episodeData.episode_number);
+    let episode = await Episode.findOne({
+      where: { series_id: seriesId, episode_number: episodeNumber }
+    });
+
+    const subtitleData = {
+      language,
+      gcsPath: playlistPath,
+      videoUrl: playlistUrl
+    };
+
+    if (!episode) {
+      episode = await Episode.create({
+        title: episodeData.title,
+        episode_number: episodeNumber,
+        series_id: seriesId,
+        description: episodeData.description,
+        reward_cost_points: episodeData.reward_cost_points || 0,
+        subtitles: [subtitleData]
+      });
+    } else {
+      const updatedSubtitles = [
+        ...(episode.subtitles || []).filter(s => s.language !== language),
+        subtitleData
+      ];
+      await episode.update({
+        subtitles: updatedSubtitles,
+        title: episodeData.title || episode.title,
+        description: episodeData.description || episode.description,
+        reward_cost_points: episodeData.reward_cost_points || episode.reward_cost_points
+      });
+    }
+
+    // Cleanup temp files
+    await fs.rm(tempDir, { recursive: true, force: true });
+
+    return res.json({
+      success: true,
+      episode: {
+        id: episode.id,
+        title: episode.title,
+        episode_number: episode.episode_number,
+        video_url: playlistUrl
+      }
+    });
+
   } catch (error) {
-    console.error('Error processing video:', error);
-    res.status(500).json({ 
-      error: error.message || 'Failed to process video',
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    console.error('Video processing error:', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body
+    });
+
+    // Cleanup temp directory if it exists
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(console.error);
+    }
+
+    return res.status(500).json({
+      error: 'Video processing failed',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 });
+
+// Generate signed URL for direct upload (same as before)
+// Add this route before your process-video endpoint
+router.post('/generate-upload-url', async (req, res) => {
+  try {
+    const { contentType, language } = req.body;
+    
+    // Validate input
+    if (!contentType || !language) {
+      return res.status(400).json({ 
+        error: 'Both contentType and language are required',
+        exampleRequest: {
+          contentType: 'video/mp4',
+          language: 'en'
+        }
+      });
+    }
+
+    // Generate unique file ID and path
+    const fileId = require('crypto').randomBytes(16).toString('hex');
+    const fileExtension = contentType.split('/')[1] || 'bin';
+    const gcsPath = `uploads/${fileId}.${fileExtension}`;
+
+    // Generate signed URL with strict conditions
+    const [signedUrl] = await storage
+      .bucket(BUCKET_NAME)
+      .file(gcsPath)
+      .getSignedUrl({
+        version: 'v4',
+        action: 'write',
+        expires: Date.now() + 15 * 60 * 1000, // 15 minutes
+        contentType: contentType,
+        extensionHeaders: {
+          'x-goog-content-length-range': '0,1073741824' // 0-1GB file size limit
+        }
+      });
+
+    res.json({
+      success: true,
+      signedUrl,
+      gcsPath,  // The permanent storage path
+      fileId,
+      language,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString()
+    });
+
+  } catch (error) {
+    console.error('URL Generation Error:', {
+      error: error.message,
+      stack: error.stack,
+      body: req.body
+    });
+
+    res.status(500).json({
+      error: 'Failed to generate upload URL',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+// Process uploaded video and create HLS (improved version)
+
+
+// Helper Functions
+
+async function processVideoWithFFmpeg({ inputUrl, outputDir, fileId }) {
+  return new Promise((resolve, reject) => {
+    const playlistPath = path.join(outputDir, 'master.m3u8');
+    const segmentPattern = path.join(outputDir, 'segment_%03d.ts');
+
+    const command = ffmpeg(inputUrl)
+      .inputOptions([
+        '-re',
+        '-threads 2',
+        '-max_alloc 50000000'
+      ])
+      .outputOptions([
+        '-c:v libx264',
+        '-profile:v baseline',
+        '-level 3.0',
+        '-pix_fmt yuv420p',
+        '-preset fast',
+        '-crf 23',
+        '-c:a aac',
+        '-b:a 128k',
+        '-hls_time 10',
+        '-hls_list_size 0',
+        '-hls_segment_filename', segmentPattern,
+        '-f hls'
+      ])
+      .output(playlistPath)
+      .on('start', (cmd) => console.log('FFmpeg command:', cmd))
+      .on('progress', (progress) => console.log(`Processing: ${progress.timemark}`))
+      .on('end', () => resolve({ duration: command._ffmpeg.stdin._duration }))
+      .on('error', (err) => reject(new Error(`FFmpeg error: ${err.message}`)));
+
+    command.run();
+  });
+}
+
+async function uploadProcessedFiles({ localDir, gcsPrefix }) {
+  const files = await fs.readdir(localDir);
+  const bucket = storage.bucket(process.env.GCS_BUCKET);
+  
+  const uploads = files.map(async (file) => {
+    const filePath = path.join(localDir, file);
+    const gcsPath = `${gcsPrefix}${file}`;
+    await bucket.upload(filePath, { destination: gcsPath });
+    return gcsPath;
+  });
+
+  const uploadedPaths = await Promise.all(uploads);
+  
+  return {
+    segments: uploadedPaths.filter(p => p.endsWith('.ts')),
+    playlistUrl: uploadedPaths.find(p => p.endsWith('.m3u8'))
+  };
+}
+
+async function handleEpisode({ seriesId, language, episodeData, hlsMasterUrl }) {
+  const episodeNumber = parseInt(episodeData.episode_number);
+  
+  let episode = await Episode.findOne({
+    where: { series_id: seriesId, episode_number: episodeNumber }
+  });
+
+  const subtitleData = {
+    language,
+    gcsPath: hlsMasterUrl,
+    videoUrl: await generateSignedUrl(hlsMasterUrl, 'read')
+  };
+
+  if (!episode) {
+    return await Episode.create({
+      title: episodeData.title,
+      episode_number: episodeNumber,
+      series_id: seriesId,
+      description: episodeData.description,
+      reward_cost_points: episodeData.reward_cost_points || 0,
+      subtitles: [subtitleData]
+    });
+  }
+
+  const updatedSubtitles = [
+    ...(episode.subtitles || []).filter(s => s.language !== language),
+    subtitleData
+  ];
+
+  await episode.update({
+    subtitles: updatedSubtitles,
+    title: episodeData.title || episode.title,
+    description: episodeData.description || episode.description,
+    reward_cost_points: episodeData.reward_cost_points || episode.reward_cost_points
+  });
+
+  return episode;
+}
+
  
 // JWT middleware
 function adminAuth(req, res, next) {
