@@ -11,7 +11,8 @@ import {
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import fs from 'fs/promises';
+import fs from 'fs';
+import fsp from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { PassThrough } from 'stream';
@@ -74,10 +75,10 @@ router.post('/process-video', async (req, res) => {
 
     // Create temp directory in system temp folder
     const tempDir = path.join(os.tmpdir(), `video-process-${fileId}`);
-    await fs.mkdir(tempDir, { recursive: true });
+    await fsp.mkdir(tempDir, { recursive: true });
     
     const hlsDir = path.join(tempDir, 'hls');
-    await fs.mkdir(hlsDir, { recursive: true });
+    await fsp.mkdir(hlsDir, { recursive: true });
 
     try {
       const gcsFolder = `hls/${fileId}/`;
@@ -137,7 +138,7 @@ router.post('/process-video', async (req, res) => {
             
             // Upload playlist file
             const playlistGcsPath = `${gcsFolder}playlist.m3u8`;
-            await uploadTextToGCS(playlistGcsPath, await fs.readFile(playlistPath, 'utf-8'), 'application/x-mpegURL');
+            await uploadTextToGCS(playlistGcsPath, await fsp.readFile(playlistPath, 'utf-8'), 'application/x-mpegURL');
             
             // Generate signed URL for playlist
             const signedUrl = await getSignedUrl(playlistGcsPath);
@@ -211,7 +212,7 @@ router.post('/process-video', async (req, res) => {
     } finally {
       // Clean up temp files
       try {
-        await fs.rm(tempDir, { recursive: true, force: true });
+        await fsp.rm(tempDir, { recursive: true, force: true });
       } catch (err) {
         console.error('Error cleaning up temp files:', err);
       }
@@ -431,7 +432,7 @@ router.post('/series', upload.single('media'), async (req, res) => {
         // Convert to HLS and upload
         const hlsId = uuidv4();
         const hlsDir = path.join('/tmp', hlsId);
-        await fs.mkdir(hlsDir, { recursive: true });
+        await fsp.mkdir(hlsDir, { recursive: true });
 
         try {
           const playlistName = await convertToHLS(req.file.buffer, hlsDir);
@@ -444,7 +445,7 @@ router.post('/series', upload.single('media'), async (req, res) => {
           console.error('Error processing video:', error);
           throw error;
         } finally {
-          await fs.rm(hlsDir, { recursive: true, force: true })
+          await fsp.rm(hlsDir, { recursive: true, force: true })
             .catch(e => console.error('Cleanup error:', e));
         }
       } else {
@@ -522,7 +523,7 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
         const hlsId = uuidv4();
         const hlsDir = path.join('/tmp', hlsId);
         
-        await fs.mkdir(hlsDir, { recursive: true });
+        await fsp.mkdir(hlsDir, { recursive: true });
         tempDirs.push(hlsDir);
  
         try {
@@ -587,7 +588,7 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
     // Cleanup
     await Promise.all(
       tempDirs.map(dir =>
-        fs.rm(dir, { recursive: true, force: true })
+        fsp.rm(dir, { recursive: true, force: true })
           .catch(e => console.error('Cleanup error:', e))
     ));
   }
