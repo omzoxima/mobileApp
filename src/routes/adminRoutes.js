@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import models from '../models/index.js';
-import { uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS, initiateResumableUpload } from '../services/gcsStorage.js';
+import { streamUploadToGCS, uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
@@ -15,24 +15,22 @@ const router = express.Router();
 // Configure FFmpeg
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-// Configure multer (for thumbnail uploads only)
+// Configure multer for file uploads
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max for thumbnails
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max
 });
 
 // HLS Conversion Function
-async function convertToHLS(inputPath, outputDir) {
+async function convertToHLS(inputBuffer, outputDir) {
   const hlsPlaylist = path.join(outputDir, 'playlist.m3u8');
-  
+  const tempInputPath = path.join(outputDir, 'input.mp4');
+  await fs.writeFile(tempInputPath, inputBuffer);
+
   return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(inputPath)
-      .inputOptions([
-        '-re',
-        '-analyzeduration 100M',
-        '-probesize 100M'
-      ])
+      .input(tempInputPath)
+      .inputOptions(['-re', '-analyzeduration 100M', '-probesize 100M'])
       .outputOptions([
         '-c:v libx264',
         '-profile:v baseline',
@@ -46,7 +44,7 @@ async function convertToHLS(inputPath, outputDir) {
         '-hls_time 10',
         '-hls_list_size 0',
         '-hls_segment_filename', path.join(outputDir, 'segment_%03d.ts'),
-        '-f hls'
+        '-f hls',
       ])
       .output(hlsPlaylist)
       .on('end', () => resolve(hlsPlaylist))
@@ -81,23 +79,109 @@ function adminAuth(req, res, next) {
 
 router.use(adminAuth);
 
-// POST /upload-url (Updated for resumable uploads)
-router.post('/upload-url', async (req, res) => {
+// POST /upload-episode
+router.post('/upload-episode', upload.fields([{ name: 'videos', maxCount: 10 }]), async (req, res) => {
+  let tempDirs = [];
   try {
-    const { fileName } = req.body;
-    if (!fileName) {
-      return res.status(400).json({ error: 'fileName is required' });
+    const { title, episode_number, series_id, video_languages, episode_description, reward_cost_points } = req.body;
+    if (!title || !episode_number || !series_id || !video_languages) {
+      return res.status(400).json({ error: 'Title, episode_number, series_id, and video_languages are required' });
     }
 
-    const { url, destination } = await initiateResumableUpload(fileName);
-    res.json({ url, destination });
-  } catch (error) {
-    console.error('Error in /upload-url endpoint:', {
-      message: error.message,
-      stack: error.stack,
-      requestBody: req.body,
+    let languages;
+    try {
+      languages = JSON.parse(video_languages);
+      if (!Array.isArray(languages) || languages.length === 0) {
+        throw new Error();
+      }
+    } catch {
+      return res.status(400).json({ error: 'Invalid video_languages format' });
+    }
+
+    const files = req.files['videos'];
+    if (!files || files.length !== languages.length) {
+      return res.status(400).json({ error: 'Number of videos must match number of languages' });
+    }
+
+    const series = await Series.findByPk(series_id);
+    if (!series) {
+      return res.status(400).json({ error: 'Series not found' });
+    }
+
+    // Process videos
+    const subtitles = await Promise.all(
+      files.map(async (file, i) => {
+        const lang = languages[i];
+        const hlsId = uuidv4();
+        const hlsDir = path.join('/tmp', hlsId);
+        await fs.mkdir(hlsDir, { recursive: true });
+        tempDirs.push(hlsDir);
+
+        try {
+          // Stream upload to GCS
+          const gcsPath = await streamUploadToGCS(file.buffer, file.originalname, file.mimetype);
+
+          // Download for HLS conversion
+          const videoBuffer = await downloadFromGCS(gcsPath);
+
+          // Convert to HLS
+          const playlistName = await convertToHLS(videoBuffer, hlsDir);
+          const gcsFolder = `hls/${hlsId}/`;
+          await uploadHLSFolderToGCS(hlsDir, gcsFolder);
+
+          const playlistPath = `${gcsFolder}playlist.m3u8`;
+          const segmentFiles = await listSegmentFiles(gcsFolder);
+          const segmentSignedUrls = {};
+          await Promise.all(
+            segmentFiles.map(async (seg) => {
+              segmentSignedUrls[seg] = await getSignedUrl(seg, 60 * 24 * 7); // 7 days expiry
+            })
+          );
+          let playlistText = await downloadFromGCS(playlistPath);
+          playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
+          await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
+          const signedUrl = await getSignedUrl(playlistPath, 3600);
+
+          return {
+            language: lang,
+            gcsPath: playlistPath,
+            videoUrl: signedUrl,
+          };
+        } catch (error) {
+          console.error(`Error processing video for language ${lang}:`, error);
+          throw error;
+        }
+      })
+    );
+
+    // Create episode
+    const episode = await Episode.create({
+      title,
+      episode_number: parseInt(episode_number),
+      series_id: series.id,
+      description: episode_description || null,
+      reward_cost_points: parseInt(reward_cost_points) || 0,
+      subtitles,
     });
-    res.status(500).json({ error: `Failed to initiate resumable upload: ${error.message}` });
+
+    res.status(201).json({
+      success: true,
+      episode,
+      signedUrls: subtitles.map((s) => ({ language: s.language, url: s.videoUrl })),
+    });
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({
+      error: 'Video upload failed',
+      details: error.message,
+    });
+  } finally {
+    // Cleanup
+    await Promise.all(
+      tempDirs.map((dir) =>
+        fs.rm(dir, { recursive: true, force: true }).catch((e) => console.error('Cleanup error:', e))
+      )
+    );
   }
 });
 
@@ -118,15 +202,17 @@ router.post('/login', async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
+  const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, {
+    expiresIn: '1d',
+  });
   res.json({
     token,
     user: {
       id: user.id,
       role: user.role,
       phone_or_email: user.phone_or_email,
-      Name: user.Name
-    }
+      Name: user.Name,
+    },
   });
 });
 
@@ -135,7 +221,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
     const { id } = req.params;
     const { lang } = req.query;
-    
+
     if (!lang) {
       return res.status(400).json({ error: 'Language code (lang) is required' });
     }
@@ -149,7 +235,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
       return res.status(404).json({ error: 'No subtitles/HLS info found' });
     }
 
-    const subtitle = episode.subtitles.find(s => s.language === lang);
+    const subtitle = episode.subtitles.find((s) => s.language === lang);
     if (!subtitle || !subtitle.gcsPath) {
       return res.status(404).json({ error: 'No HLS video found for the requested language' });
     }
@@ -157,9 +243,11 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
     const gcsFolder = subtitle.gcsPath.replace(/playlist\.m3u8$/, '');
     const segmentFiles = await listSegmentFiles(gcsFolder);
     const segmentSignedUrls = {};
-    await Promise.all(segmentFiles.map(async (seg) => {
-      segmentSignedUrls[seg] = await getSignedUrl(seg, 3600); // 1 hour expiry
-    }));
+    await Promise.all(
+      segmentFiles.map(async (seg) => {
+        segmentSignedUrls[seg] = await getSignedUrl(seg, 3600); // 1 hour expiry
+      })
+    );
     let playlistText = await downloadFromGCS(subtitle.gcsPath);
     playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
     await uploadTextToGCS(subtitle.gcsPath, playlistText, 'application/x-mpegURL');
@@ -177,7 +265,7 @@ router.get('/admins', async (req, res) => {
   try {
     const admins = await models.User.findAll({
       where: { role: 'admin' },
-      attributes: ['id', 'role', 'phone_or_email', 'Name', 'created_at', 'updated_at']
+      attributes: ['id', 'role', 'phone_or_email', 'Name', 'created_at', 'updated_at'],
     });
     res.json(admins);
   } catch (error) {
@@ -190,17 +278,19 @@ router.get('/series', async (req, res) => {
   try {
     const series = await Series.findAll({
       include: [{ model: Category, attributes: ['name'] }],
-      attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at']
+      attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at'],
     });
-    
-    res.json(series.map(s => ({
-      id: s.id,
-      title: s.title,
-      thumbnail_url: s.thumbnail_url,
-      created_at: s.created_at,
-      updated_at: s.updated_at,
-      category_name: s.Category ? s.Category.name : null
-    })));
+
+    res.json(
+      series.map((s) => ({
+        id: s.id,
+        title: s.title,
+        thumbnail_url: s.thumbnail_url,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        category_name: s.Category ? s.Category.name : null,
+      }))
+    );
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch series' });
   }
@@ -209,19 +299,17 @@ router.get('/series', async (req, res) => {
 // GET /series/:id
 router.get('/series/:id', async (req, res) => {
   try {
-    //console.log('Requested series id:', req.params.id);
     const series = await Series.findByPk(req.params.id, {
       include: [
         { model: Category, attributes: ['name'] },
         {
           model: Episode,
           attributes: ['title', 'episode_number', 'description'],
-          order: [['episode_number', 'ASC']]
-        }
+          order: [['episode_number', 'ASC']],
+        },
       ],
-      attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at']
+      attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at'],
     });
-    //console.log('Series found:', series);
 
     if (!series) return res.status(404).json({ error: 'Series not found' });
 
@@ -232,11 +320,13 @@ router.get('/series/:id', async (req, res) => {
       created_at: series.created_at,
       updated_at: series.updated_at,
       category_name: series.Category ? series.Category.name : null,
-      episodes: series.Episodes ? series.Episodes.map(e => ({
-        title: e.title,
-        episode_number: e.episode_number,
-        description: e.description
-      })) : []
+      episodes: series.Episodes
+        ? series.Episodes.map((e) => ({
+            title: e.title,
+            episode_number: e.episode_number,
+            description: e.description,
+          }))
+        : [],
     });
   } catch (error) {
     console.error('Error in GET /series/:id:', error);
@@ -272,7 +362,7 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
         return res.status(400).json({ error: 'Thumbnail must be an image' });
       }
       const gcsPath = `thumbnails/${uuidv4()}/${req.file.originalname}`;
-      await uploadTextToGCS(gcsPath, req.file.buffer, req.file.mimetype);
+      await streamUploadToGCS(req.file.buffer, req.file.originalname, req.file.mimetype);
       thumbnail_url = await getSignedUrl(gcsPath, 315360000); // 10 years
     }
 
@@ -280,7 +370,7 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
     res.status(201).json({
       uuid: newSeries.id,
       title: newSeries.title,
-      thumbnail_url: thumbnail_url
+      thumbnail_url: thumbnail_url,
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to create series' });
@@ -291,112 +381,11 @@ router.post('/series', upload.single('thumbnail'), async (req, res) => {
 router.get('/categories', async (req, res) => {
   try {
     const categories = await Category.findAll({
-      attributes: ['id', 'name', 'description', 'created_at', 'updated_at']
+      attributes: ['id', 'name', 'description', 'created_at', 'updated_at'],
     });
     res.json(categories);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch categories' });
-  }
-});
-
-// POST /upload-multilingual
-router.post('/upload-multilingual', async (req, res) => {
-  let tempDirs = [];
-  
-  try {
-    const { title, episode_number, series_id, video_languages, videos, episode_description, reward_cost_points } = req.body;
-    if (!title || !episode_number || !series_id || !video_languages || !videos) {
-      return res.status(400).json({ error: 'Title, episode_number, series_id, video_languages, and videos are required' });
-    }
-
-    let languages, videoPaths;
-    try {
-      languages = JSON.parse(video_languages);
-      videoPaths = JSON.parse(videos);
-      if (!Array.isArray(languages) || !Array.isArray(videoPaths) || languages.length !== videoPaths.length) {
-        throw new Error();
-      }
-    } catch {
-      return res.status(400).json({ error: 'Invalid languages or videos format' });
-    }
-
-    const series = await Series.findByPk(series_id);
-    if (!series) {
-      return res.status(400).json({ error: 'Series not found' });
-    }
-
-    // Process videos
-    const subtitles = await Promise.all(
-      videoPaths.map(async (gcsPath, i) => {
-        const lang = languages[i];
-        const hlsId = uuidv4();
-        const hlsDir = path.join('/tmp', hlsId);
-        await fs.mkdir(hlsDir, { recursive: true });
-        tempDirs.push(hlsDir);
-
-        try {
-          // Download video from GCS
-          const videoBuffer = await downloadFromGCS(gcsPath);
-          const tempInputPath = path.join(hlsDir, 'input.mp4');
-          await fs.writeFile(tempInputPath, videoBuffer);
-
-          // Convert to HLS
-          const playlistName = await convertToHLS(tempInputPath, hlsDir);
-          const gcsFolder = `hls/${hlsId}/`;
-          await uploadHLSFolderToGCS(hlsDir, gcsFolder);
-
-          const playlistPath = `${gcsFolder}playlist.m3u8`;
-          const segmentFiles = await listSegmentFiles(gcsFolder);
-          const segmentSignedUrls = {};
-          await Promise.all(segmentFiles.map(async (seg) => {
-            segmentSignedUrls[seg] = await getSignedUrl(seg, 60 * 24 * 7); // 7 days expiry
-          }));
-          let playlistText = await downloadFromGCS(playlistPath);
-          playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
-          await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
-          const signedUrl = await getSignedUrl(playlistPath, 3600);
-
-          return {
-            language: lang,
-            gcsPath: playlistPath,
-            videoUrl: signedUrl
-          };
-        } catch (error) {
-          console.error(`Error processing video for language ${lang}:`, error);
-          throw error;
-        }
-      })
-    );
-
-    // Create episode
-    const episode = await Episode.create({
-      title,
-      episode_number: parseInt(episode_number),
-      series_id: series.id,
-      description: episode_description || null,
-      reward_cost_points: parseInt(reward_cost_points) || 0,
-      subtitles
-    });
-
-    res.status(201).json({
-      success: true,
-      episode,
-      signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
-    });
-  } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({
-      error: 'Video upload failed',
-      details: error.message
-    });
-  } finally {
-    // Cleanup
-    await Promise.all(
-      tempDirs.map(dir =>
-        fs.rm(dir, { recursive: true, force: true })
-          .catch(e => console.error('Cleanup error:', e))
-      )
-    );
   }
 });
 
