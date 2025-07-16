@@ -9,7 +9,7 @@ import {
   getFileUrl,
   uploadToGCS,
   deleteFromGCS
-} from './gcstorage.js';
+} from '../services/gcsStorage.js';
 import { Series, Episode } from '../models.js';
 import multer from 'multer';
 const router = express.Router();
