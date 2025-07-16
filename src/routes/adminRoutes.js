@@ -1,8 +1,13 @@
 import express from 'express';
 import ffmpeg from 'fluent-ffmpeg';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs/promises';
+import fsp from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
+import { v4 as uuidv4 } from 'uuid';
 import {
   generateSignedUrl,
   streamToGCS,
@@ -10,8 +15,9 @@ import {
   uploadToGCS,
   deleteFromGCS
 } from '../services/gcsStorage.js';
-import { Series, Episode } from '../models/index.js';
+import models from '../models/index.js';
 import multer from 'multer';
+const { Series, Episode } = models;
 const router = express.Router();
 // Configure multer
 const upload = multer({
