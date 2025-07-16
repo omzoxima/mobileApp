@@ -1,38 +1,33 @@
 import express from 'express';
 import multer from 'multer';
 import models from '../models/index.js';
-import { uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
+import { uploadHLSFolderToGCS, getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS, initiateResumableUpload } from '../services/gcsStorage.js';
 import path from 'path';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
-//import bcrypt from 'bcrypt';
-import { uploadToGCS } from '../services/gcsStorage.js';
- 
+
 const { Series, Episode, Category } = models;
 const router = express.Router();
- 
+
 // Configure FFmpeg
 ffmpeg.setFfmpegPath(ffmpegInstaller.path);
- 
-// Configure multer
+
+// Configure multer (for thumbnail uploads only)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 500 * 1024 * 1024 } // 500MB max per video
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max for thumbnails
 });
- 
+
 // HLS Conversion Function
-async function convertToHLS(videoBuffer, outputDir) {
-  const tempInputPath = path.join(outputDir, 'input.mp4');
-  await fs.writeFile(tempInputPath, videoBuffer);
- 
+async function convertToHLS(inputPath, outputDir) {
   const hlsPlaylist = path.join(outputDir, 'playlist.m3u8');
   
   return new Promise((resolve, reject) => {
     ffmpeg()
-      .input(tempInputPath)
+      .input(inputPath)
       .inputOptions([
         '-re',
         '-analyzeduration 100M',
@@ -59,22 +54,21 @@ async function convertToHLS(videoBuffer, outputDir) {
       .run();
   });
 }
- 
+
 // JWT middleware
 function adminAuth(req, res, next) {
-  // Skip auth for login and HLS URL endpoints
   if (
     req.path === '/login' ||
     (req.method === 'GET' && /^\/episodes\/[^/]+\/hls-url$/.test(req.path))
   ) {
     return next();
   }
- 
+
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Unauthorized: No token provided' });
   }
- 
+
   const token = authHeader.split(' ')[1];
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
@@ -84,29 +78,42 @@ function adminAuth(req, res, next) {
     return res.status(401).json({ error: 'Unauthorized: Invalid token' });
   }
 }
- 
-// Apply adminAuth middleware to all routes except the excluded ones
+
 router.use(adminAuth);
- 
+
+// POST /upload-url (Updated for resumable uploads)
+router.post('/upload-url', async (req, res) => {
+  try {
+    const { fileName } = req.body;
+    if (!fileName) {
+      return res.status(400).json({ error: 'fileName is required' });
+    }
+
+    const { url, destination } = await initiateResumableUpload(fileName);
+    res.json({ url, destination });
+  } catch (error) {
+    console.error('Error initiating resumable upload:', error);
+    res.status(500).json({ error: 'Failed to initiate resumable upload' });
+  }
+});
+
 // POST /login
 router.post('/login', async (req, res) => {
   const { phone_or_email, password } = req.body;
   if (!phone_or_email || !password) {
     return res.status(400).json({ error: 'phone_or_email and password are required' });
   }
- 
+
   const user = await models.User.findOne({ where: { phone_or_email } });
   if (!user || (user.role !== 'admin' && user.role !== 'superadmin')) {
-    console.log('check');
     return res.status(401).json({ error: 'Invalid credentials' });
   }
- 
-  const match = await models.User.findOne({ where: { password }});
+
+  const match = await models.User.findOne({ where: { password } });
   if (!match) {
-    console.log('check11')
     return res.status(401).json({ error: 'Invalid credentials' });
   }
- 
+
   const token = jwt.sign({ userId: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '1d' });
   res.json({
     token,
@@ -118,7 +125,7 @@ router.post('/login', async (req, res) => {
     }
   });
 });
- 
+
 // GET /episodes/:id/hls-url
 router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
@@ -126,24 +133,23 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
     const { lang } = req.query;
     
     if (!lang) {
-      return res.status(400).json({ error: 'Language code (lang) is required as a query parameter.' });
+      return res.status(400).json({ error: 'Language code (lang) is required' });
     }
- 
-    const episode = await models.Episode.findByPk(id);
+
+    const episode = await Episode.findByPk(id);
     if (!episode) {
-      return res.status(404).json({ error: 'Episode not found.' });
+      return res.status(404).json({ error: 'Episode not found' });
     }
- 
+
     if (!Array.isArray(episode.subtitles)) {
-      return res.status(404).json({ error: 'No subtitles/HLS info found for this episode.' });
+      return res.status(404).json({ error: 'No subtitles/HLS info found' });
     }
- 
+
     const subtitle = episode.subtitles.find(s => s.language === lang);
     if (!subtitle || !subtitle.gcsPath) {
-      return res.status(404).json({ error: 'No HLS video found for the requested language.' });
+      return res.status(404).json({ error: 'No HLS video found for the requested language' });
     }
- 
-    // --- Begin playlist rewrite logic ---
+
     const gcsFolder = subtitle.gcsPath.replace(/playlist\.m3u8$/, '');
     const segmentFiles = await listSegmentFiles(gcsFolder);
     const segmentSignedUrls = {};
@@ -154,32 +160,32 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
     playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
     await uploadTextToGCS(subtitle.gcsPath, playlistText, 'application/x-mpegURL');
     const signedUrl = await getSignedUrl(subtitle.gcsPath, 3600);
-    // --- End playlist rewrite logic ---
- 
+
     return res.json({ signedUrl });
   } catch (error) {
     console.error('Error generating HLS signed URL:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate signed URL' });
+    res.status(500).json({ error: 'Failed to generate signed URL' });
   }
 });
- 
-// Admin routes
+
+// GET /admins
 router.get('/admins', async (req, res) => {
   try {
     const admins = await models.User.findAll({
       where: { role: 'admin' },
-      attributes: ['id','role', 'phone_or_email', 'Name', 'created_at', 'updated_at']
+      attributes: ['id', 'role', 'phone_or_email', 'Name', 'created_at', 'updated_at']
     });
     res.json(admins);
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to fetch admin users' });
+    res.status(500).json({ error: 'Failed to fetch admin users' });
   }
 });
- 
+
+// GET /series
 router.get('/series', async (req, res) => {
   try {
-    const series = await models.Series.findAll({
-      include: [{ model: models.Category, attributes: ['name'] }],
+    const series = await Series.findAll({
+      include: [{ model: Category, attributes: ['name'] }],
       attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at']
     });
     
@@ -192,33 +198,34 @@ router.get('/series', async (req, res) => {
       category_name: s.Category ? s.Category.name : null
     })));
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to fetch series' });
+    res.status(500).json({ error: 'Failed to fetch series' });
   }
 });
- 
+
+// GET /series/:id
 router.get('/series/:id', async (req, res) => {
   try {
-    const series = await models.Series.findByPk(req.params.id, {
+    const series = await Series.findByPk(req.params.id, {
       include: [
-        { model: models.Category, attributes: ['name'] },
+        { model: Category, attributes: ['name'] },
         {
-          model: models.Episode,
+          model: Episode,
           attributes: ['title', 'episode_number', 'description'],
           order: [['episode_number', 'ASC']]
         }
       ],
       attributes: ['id', 'title', 'thumbnail_url', 'created_at', 'updated_at']
     });
- 
+
     if (!series) return res.status(404).json({ error: 'Series not found' });
- 
+
     res.json({
       id: series.id,
       title: series.title,
       thumbnail_url: series.thumbnail_url,
       created_at: series.created_at,
       updated_at: series.updated_at,
-      category_name: series.Category ? series.Category.name : null,
+      category_name: series.Category ? s.Category.name : null,
       episodes: series.Episodes ? series.Episodes.map(e => ({
         title: e.title,
         episode_number: e.episode_number,
@@ -226,155 +233,122 @@ router.get('/series/:id', async (req, res) => {
       })) : []
     });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to fetch series details' });
+    res.status(500).json({ error: 'Failed to fetch series details' });
   }
 });
- 
+
+// POST /categories
 router.post('/categories', async (req, res) => {
   try {
     const { name, description } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required' });
- 
-    const newCategory = await models.Category.create({ name, description });
+
+    const newCategory = await Category.create({ name, description });
     res.status(201).json({ uuid: newCategory.id, name: newCategory.name });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to create category' });
+    res.status(500).json({ error: 'Failed to create category' });
   }
 });
- 
+
+// POST /series
 router.post('/series', upload.single('thumbnail'), async (req, res) => {
   try {
     const { title, category_id } = req.body;
     if (!title || !category_id) {
       return res.status(400).json({ error: 'Title and category_id are required' });
     }
- 
+
     let thumbnail_url = null;
     if (req.file) {
-      // Check if it's an image file
       const imageTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-      
-      if (imageTypes.includes(req.file.mimetype)) {
-        // For images, use simple signed URL
-        const gcsPath = await uploadToGCS(req.file, 'thumbnails');
-        thumbnail_url = await getSignedUrl(gcsPath); // 10 years
-      } else {
-        // For video files, use HLS conversion
-        const hlsId = uuidv4();
-        const hlsDir = path.join('/tmp', hlsId);
-        
-        await fs.mkdir(hlsDir, { recursive: true });
- 
-        try {
-          const playlistName = await convertToHLS(req.file.buffer, hlsDir);
-          const gcsFolder = `thumbnails/${hlsId}/`;
-          await uploadHLSFolderToGCS(hlsDir, gcsFolder);
-          
-          const playlistPath = `${gcsFolder}playlist.m3u8`;
-          const signedUrl = await getSignedUrl(playlistPath); // 10 years
- 
-          thumbnail_url = signedUrl;
-        } catch (error) {
-          console.error('Error processing thumbnail:', error);
-          throw error;
-        } finally {
-          // Cleanup
-          await fs.rm(hlsDir, { recursive: true, force: true })
-            .catch(e => console.error('Cleanup error:', e));
-        }
+      if (!imageTypes.includes(req.file.mimetype)) {
+        return res.status(400).json({ error: 'Thumbnail must be an image' });
       }
+      const gcsPath = `thumbnails/${uuidv4()}/${req.file.originalname}`;
+      await uploadTextToGCS(gcsPath, req.file.buffer, req.file.mimetype);
+      thumbnail_url = await getSignedUrl(gcsPath, 315360000); // 10 years
     }
- 
-    const newSeries = await models.Series.create({ title, category_id, thumbnail_url });
+
+    const newSeries = await Series.create({ title, category_id, thumbnail_url });
     res.status(201).json({
       uuid: newSeries.id,
       title: newSeries.title,
       thumbnail_url: thumbnail_url
     });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to create series' });
+    res.status(500).json({ error: 'Failed to create series' });
   }
 });
- 
-// GET /categories (admin only)
+
+// GET /categories
 router.get('/categories', async (req, res) => {
   try {
-    const categories = await models.Category.findAll({
-      attributes: ['id', 'name', 'description','created_at','updated_at']
+    const categories = await Category.findAll({
+      attributes: ['id', 'name', 'description', 'created_at', 'updated_at']
     });
     res.json(categories);
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to fetch categories' });
+    res.status(500).json({ error: 'Failed to fetch categories' });
   }
 });
- 
-// Upload Endpoint (unchanged from your original)
-router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 10 }]), async (req, res) => {
+
+// POST /upload-multilingual
+router.post('/upload-multilingual', async (req, res) => {
   let tempDirs = [];
   
   try {
-    // Validate inputs
-    const { title, episode_number, series_id, video_languages } = req.body;
-    if (!episode_number || !series_id) {
-      return res.status(400).json({ error: 'Title, episode number, and series ID are required' });
+    const { title, episode_number, series_id, video_languages, videos, episode_description, reward_cost_points } = req.body;
+    if (!title || !episode_number || !series_id || !video_languages || !videos) {
+      return res.status(400).json({ error: 'Title, episode_number, series_id, video_languages, and videos are required' });
     }
- 
-    // Parse languages
-    let languages;
+
+    let languages, videoPaths;
     try {
       languages = JSON.parse(video_languages);
-      if (!Array.isArray(languages)) throw new Error();
+      videoPaths = JSON.parse(videos);
+      if (!Array.isArray(languages) || !Array.isArray(videoPaths) || languages.length !== videoPaths.length) {
+        throw new Error();
+      }
     } catch {
-      return res.status(400).json({ error: 'Invalid languages format' });
+      return res.status(400).json({ error: 'Invalid languages or videos format' });
     }
- 
-    // Validate files
-    const videoFiles = req.files.videos || [];
-    
-    if (videoFiles.length !== languages.length) {
-      return res.status(400).json({ error: 'Video and language count mismatch' });
-    }
- 
-    // Verify series exists
+
     const series = await Series.findByPk(series_id);
     if (!series) {
       return res.status(400).json({ error: 'Series not found' });
     }
- 
+
     // Process videos
     const subtitles = await Promise.all(
-      videoFiles.map(async (file, i) => {
+      videoPaths.map(async (gcsPath, i) => {
         const lang = languages[i];
         const hlsId = uuidv4();
         const hlsDir = path.join('/tmp', hlsId);
-        
         await fs.mkdir(hlsDir, { recursive: true });
         tempDirs.push(hlsDir);
- 
+
         try {
-          const playlistName = await convertToHLS(file.buffer, hlsDir);
+          // Download video from GCS
+          const videoBuffer = await downloadFromGCS(gcsPath);
+          const tempInputPath = path.join(hlsDir, 'input.mp4');
+          await fs.writeFile(tempInputPath, videoBuffer);
+
+          // Convert to HLS
+          const playlistName = await convertToHLS(tempInputPath, hlsDir);
           const gcsFolder = `hls/${hlsId}/`;
           await uploadHLSFolderToGCS(hlsDir, gcsFolder);
-          
-          // --- Begin playlist rewrite logic ---
-          // 1. List all .ts segment files in GCS
+
+          const playlistPath = `${gcsFolder}playlist.m3u8`;
           const segmentFiles = await listSegmentFiles(gcsFolder);
-          // 2. Generate signed URLs for each segment
           const segmentSignedUrls = {};
           await Promise.all(segmentFiles.map(async (seg) => {
             segmentSignedUrls[seg] = await getSignedUrl(seg, 60 * 24 * 7); // 7 days expiry
           }));
-          // 3. Download the playlist
-          const playlistPath = `${gcsFolder}playlist.m3u8`;
           let playlistText = await downloadFromGCS(playlistPath);
-          // 4. Replace segment references with signed URLs
           playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, (match) => segmentSignedUrls[`${gcsFolder}${match}`] || match);
-          // 5. Upload the modified playlist back to GCS
           await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
-          // 6. Generate signed URL for the playlist
-          const signedUrl = await getSignedUrl(playlistPath);
-          // --- End playlist rewrite logic ---
- 
+          const signedUrl = await getSignedUrl(playlistPath, 3600);
+
           return {
             language: lang,
             gcsPath: playlistPath,
@@ -386,23 +360,22 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
         }
       })
     );
- 
+
     // Create episode
     const episode = await Episode.create({
       title,
-      episode_number,
+      episode_number: parseInt(episode_number),
       series_id: series.id,
-      description: req.body.episode_description || null,
-      reward_cost_points: req.body.reward_cost_points || 0,
-      subtitles: subtitles
+      description: episode_description || null,
+      reward_cost_points: parseInt(reward_cost_points) || 0,
+      subtitles
     });
- 
+
     res.status(201).json({
       success: true,
       episode,
       signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
     });
- 
   } catch (error) {
     console.error('Upload error:', error);
     res.status(500).json({
@@ -415,11 +388,12 @@ router.post('/upload-multilingual', upload.fields([{ name: 'videos', maxCount: 1
       tempDirs.map(dir =>
         fs.rm(dir, { recursive: true, force: true })
           .catch(e => console.error('Cleanup error:', e))
-    ));
+      )
+    );
   }
 });
 
-// DELETE /users/:id (admin only)
+// DELETE /users/:id
 router.delete('/users/:id', async (req, res) => {
   try {
     const user = await models.User.findByPk(req.params.id);
@@ -429,254 +403,8 @@ router.delete('/users/:id', async (req, res) => {
     await user.destroy();
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to delete user' });
+    res.status(500).json({ error: 'Failed to delete user' });
   }
 });
 
-
-
-
-router.post('/upload-direct-gcs', upload.array('videos', 10), async (req, res) => {
-  let tempDirs = [];
-  try {
-    const { title, episode_number, series_id, video_languages } = req.body;
-    if (!episode_number || !series_id || !video_languages) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
-    let languages;
-    try {
-      languages = JSON.parse(video_languages);
-      if (!Array.isArray(languages)) throw new Error();
-    } catch {
-      return res.status(400).json({ error: 'Invalid languages format' });
-    }
-
-    const videoFiles = req.files || [];
-    if (videoFiles.length !== languages.length) {
-      return res.status(400).json({ error: 'Mismatch between videos and languages' });
-    }
-
-    const series = await Series.findByPk(series_id);
-    if (!series) return res.status(404).json({ error: 'Series not found' });
-
-    const subtitles = await Promise.all(videoFiles.map(async (file, i) => {
-      const lang = languages[i];
-      const hlsId = uuidv4();
-      const hlsDir = path.join('/tmp', hlsId);
-      await fs.mkdir(hlsDir, { recursive: true });
-      tempDirs.push(hlsDir);
-
-      const playlistName = await convertToHLS(file.buffer, hlsDir);
-      const gcsFolder = `hls/${hlsId}/`;
-      await uploadHLSFolderToGCS(hlsDir, gcsFolder);
-
-      const segmentFiles = await listSegmentFiles(gcsFolder);
-      const segmentSignedUrls = {};
-      await Promise.all(segmentFiles.map(async seg => {
-        segmentSignedUrls[seg] = await getSignedUrl(seg, 60 * 24 * 7);
-      }));
-
-      const playlistPath = `${gcsFolder}playlist.m3u8`;
-      let playlistText = await downloadFromGCS(playlistPath);
-      playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm, match => segmentSignedUrls[`${gcsFolder}${match}`] || match);
-      await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
-      const signedUrl = await getSignedUrl(playlistPath);
-
-      return { language: lang, gcsPath: playlistPath, videoUrl: signedUrl };
-    }));
-
-    const episode = await Episode.create({
-      title,
-      episode_number,
-      series_id: series.id,
-      subtitles
-    });
-
-    res.status(201).json({
-      success: true,
-      episode,
-      signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
-    });
-  } catch (error) {
-    console.error('Direct upload error:', error);
-    res.status(500).json({ error: error.message || 'Direct upload failed' });
-  } finally {
-    await Promise.all(tempDirs.map(dir => fs.rm(dir, { recursive: true, force: true }).catch(() => {})));
-  }
-});
-
- 
 export default router;
-
-/*import express from 'express';
-import path from 'path';
-import fs from 'fs/promises';
-import { v4 as uuidv4 } from 'uuid';
-import models from '../models/index.js';
-import {
-  getSignedUploadUrl,
-  getSignedUrl,
-  uploadHLSFolderToGCS,
-  listSegmentFiles,
-  downloadFromGCS,
-  uploadTextToGCS,
-  downloadFileFromGCS
-} from '../services/gcsStorage.js';
-import { convertToHLS } from '../utils/ffmpeg.js';
-
-const { Series, Episode } = models;
-const router = express.Router();
-
-/* ------------------------------------------------------------------ *
- | 1. Generate a signed GCS *upload* URL so the client can upload big |
- |    files (>32 MB) directly to Cloud Storage.                       |
- * ------------------------------------------------------------------ */
-/*router.post('/upload-url', async (req, res) => {
-  try {
-    const { originalFilename, contentType } = req.body;
-    if (!originalFilename || !contentType) {
-      return res.status(400).json({ error: 'originalFilename and contentType required' });
-    }
-
-    const ext = path.extname(originalFilename) || '.mp4';
-    const id  = uuidv4();
-    const gcsPath = `raw-videos/${id}${ext}`;
-
-    const signedUrl = await getSignedUploadUrl(gcsPath, contentType, 15); // 15 min expiry
-    return res.json({ signedUrl, gcsPath, bucket: 'run-sources-tuktuki-464514-asia-south1' });
-  } catch (err) {
-    console.error('Signed‑URL error:', err);
-    res.status(500).json({ error: 'Failed to create upload URL', details: err.message });
-  }
-});
-
-/* ------------------------------------------------------------------ *
- | 2. Process an episode once all videos are in GCS.                  |
- * ------------------------------------------------------------------ */
-/*router.post('/upload-multilingual', async (req, res) => {
-  const tempDirs = [];
-
-  try {
-    /* ------------------------ validate body ----------------------- */
-    /*const {
-      title,
-      episode_number,
-      series_id,
-      video_languages,
-      video_gcs_paths,              // new!
-      episode_description = null,
-      reward_cost_points  = 0
-    } = req.body;
-
-    if (!episode_number || !series_id || !video_languages || !video_gcs_paths) {
-      return res.status(400).json({ error: 'episode_number, series_id, video_languages, video_gcs_paths required' });
-    }
-
-    let languages, gcsPaths;
-    try {
-      languages = JSON.parse(video_languages);
-      gcsPaths  = JSON.parse(video_gcs_paths);
-      if (!Array.isArray(languages) || !Array.isArray(gcsPaths)) throw new Error();
-    } catch {
-      return res.status(400).json({ error: 'video_languages and video_gcs_paths must be JSON arrays' });
-    }
-
-    if (languages.length !== gcsPaths.length) {
-      return res.status(400).json({ error: 'Video path count must equal language count' });
-    }
-
-    /* ---------------------- verify series   ----------------------- */
-    /*const series = await Series.findByPk(series_id);
-    if (!series) {
-      return res.status(400).json({ error: 'Series not found' });
-    }
-
-    /* -------------------- process each video ---------------------- */
-      /*const subtitles = await Promise.all(
-      gcsPaths.map(async (gcsPath, i) => {
-        const lang   = languages[i];
-        const hlsId  = uuidv4();
-        const hlsDir = path.join('/tmp', hlsId);
-        await fs.mkdir(hlsDir, { recursive: true });
-        tempDirs.push(hlsDir);
-
-        /* 1. download original video to /tmp */
-          /*const localInput = path.join(hlsDir, `input${path.extname(gcsPath) || '.mp4'}`);
-        await downloadFileFromGCS(gcsPath, localInput);
-
-        /* 2. convert to HLS */
-         /* await convertToHLS(localInput, hlsDir);
-
-        /* 3. upload HLS folder */
-         /* const gcsFolder = `hls/${hlsId}/`;
-        await uploadHLSFolderToGCS(hlsDir, gcsFolder);
-
-        /* 4. sign segments & playlist */
-         /* const segmentFiles    = await listSegmentFiles(gcsFolder);
-        const segmentSigned   = {};
-        await Promise.all(
-          segmentFiles.map(async seg => {
-            segmentSigned[seg] = await getSignedUrl(seg, 60 * 24 * 7); // 7 days
-          })
-        );
-
-        const playlistPath   = `${gcsFolder}playlist.m3u8`;
-        let playlistText     = await downloadFromGCS(playlistPath);
-        playlistText = playlistText.replace(/^(segment_\d+\.ts)$/gm,
-          m => segmentSigned[`${gcsFolder}${m}`] || m
-        );
-
-        await uploadTextToGCS(playlistPath, playlistText, 'application/x-mpegURL');
-
-        const signedPlaylist = await getSignedUrl(playlistPath, 60 * 24 * 7);
-
-        return {
-          language: lang,
-          gcsPath: playlistPath,
-          videoUrl: signedPlaylist
-        };
-      })
-    );
-
-    /* ---------------------- create episode ----------------------- */
-      /*const episode = await Episode.create({
-      title,
-      episode_number,
-      series_id: series.id,
-      description: episode_description,
-      reward_cost_points,
-      subtitles
-    });
-
-    res.status(201).json({
-      success: true,
-      episode,
-      signedUrls: subtitles.map(s => ({ language: s.language, url: s.videoUrl }))
-    });
-
-  } catch (err) {
-    console.error('Episode upload error:', err);
-    res.status(500).json({ error: 'Video processing failed', details: err.message });
-  } finally {
-    /* ------------- clean up tmp dirs even on failure ------------- */
-     /* await Promise.all(
-      tempDirs.map(d => fs.rm(d, { recursive: true, force: true })
-        .catch(e => console.error('Cleanup error:', e)))
-    );
-  }
-});
-
-/* ---------- (optional) keep your admin delete route ------------ */
-  /*router.delete('/users/:id', async (req, res) => {
-  try {
-    const user = await models.User.findByPk(req.params.id);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    await user.destroy();
-    res.json({ message: 'User deleted successfully' });
-  } catch (err) {
-    res.status(500).json({ error: err.message || 'Failed to delete user' });
-  }
-});
-
-export default router;*/
