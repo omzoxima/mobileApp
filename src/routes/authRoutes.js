@@ -3,7 +3,7 @@ import jwt from 'jsonwebtoken';
 import models from '../models/index.js';
 import fetch from 'node-fetch';
 
-const { User, RewardTransaction } = models;
+const { User, RewardTransaction,RewardTask } = models;
 const router = express.Router();
 
 // Helper: Generate JWT
@@ -55,23 +55,26 @@ async function getUserFromProvider(provider, token) {
 router.post('/social-login', async (req, res) => {
   const { provider, token, deviceId } = req.body;
   if (!provider || !token) return res.status(400).json({ error: 'provider and token are required' });
+
+  const t = await sequelize.transaction(); // Start transaction manually
+
   try {
     const { providerId, email, name, providerField } = await getUserFromProvider(provider, token);
     let user;
+
     if (deviceId) {
       user = await User.findOne({ where: { device_id: deviceId } });
       if (user) {
-        // Update user with provider info
         user[providerField] = providerId;
         if (email) user.phone_or_email = email;
         if (name) user.Name = name;
         user.login_type = provider;
         user.is_active = true;
-        await user.save();
+        await user.save({ transaction: t });
       }
     }
+
     if (!user) {
-      // Find by provider id
       let where = {};
       where[providerField] = providerId;
       user = await User.findOne({ where });
@@ -79,20 +82,70 @@ router.post('/social-login', async (req, res) => {
         user = await User.create({
           [providerField]: providerId,
           phone_or_email: email || '',
-          Name: name || 'Guest User',
+          Name: name || '',
           login_type: provider,
           is_active: true,
           current_reward_balance: 0,
           device_id: deviceId || null
-        });
+        }, { transaction: t });
       }
     }
+
+    const today = new Date();
+
+    const appOpenTasks = await RewardTask.findAll({
+      where: {
+        type: 'login',
+        is_active: true,
+      },
+      attributes: ['id', 'points', 'repeat_type']
+    });
+
+    const transactions = [];
+    let pointsGranted = 0;
+
+    for (const task of appOpenTasks) {
+      // Check if the user already received this task reward
+      const alreadyRewarded = await RewardTransaction.findOne({
+        where: {
+          user_id: user.id,
+          task_id: task.id,
+        },
+        transaction: t
+      });
+
+      if (!alreadyRewarded) {
+        transactions.push({
+          id: uuidv4(),
+          user_id: user.id,
+          task_id: task.id,
+          type: 'earn',
+          points: task.points,
+          created_at: today
+        });
+        pointsGranted += task.points;
+      }
+    }
+
+    if (transactions.length > 0) {
+      await user.increment('current_reward_balance', {
+        by: pointsGranted,
+        transaction: t
+      });
+      await RewardTransaction.bulkCreate(transactions, { transaction: t });
+    }
+
+    await t.commit();
+
     const jwtToken = generateJwt(user);
     res.json({ token: jwtToken, user });
+
   } catch (error) {
+    await t.rollback();
     res.status(400).json({ error: error.message });
   }
 });
+
 
 // Route 2: Reward Transaction
 router.post('/reward-transaction', async (req, res) => {
