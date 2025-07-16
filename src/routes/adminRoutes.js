@@ -10,7 +10,7 @@ import {
   uploadToGCS,
   deleteFromGCS
 } from '../services/gcsStorage.js';
-import { Series, Episode } from '../models.js';
+import { Series, Episode } from '../models/index.js';
 import multer from 'multer';
 const router = express.Router();
 // Configure multer
