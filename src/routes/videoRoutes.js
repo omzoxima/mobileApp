@@ -2,6 +2,7 @@ import express from 'express';
 import models from '../models/index.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+import { generateSignedUrl } from '../services/gcsStorage.js';
 
 
 const { Series, Episode, Category,EpisodeBundlePrice } = models;
@@ -23,11 +24,32 @@ router.get('/series', async (req, res) => {
       include: [{ model: Category }],
       order: [['created_at', 'DESC']]
     });
-    // Map to include poster_url in the response
-    const seriesWithPoster = rows.map(series => ({
-      ...series.toJSON(),
-      thumbnail_url: series.thumbnail_url
+
+    // Process all series in parallel for speed
+    const seriesWithPoster = await Promise.all(rows.map(async series => {
+      let thumbnail_url = series.thumbnail_url;
+
+      // If already a public URL, use as is
+      if (thumbnail_url && thumbnail_url.startsWith('http')) {
+        return { ...series.toJSON(), thumbnail_url };
+      }
+
+      // If missing or expired, generate a new signed URL
+      if (thumbnail_url) {
+        // Optionally: check if the URL is expired (if you store expiry info)
+        // For simplicity, always generate a new signed URL here
+        const newSignedUrl = await generateSignedUrl(thumbnail_url, 60 * 24 * 7); // 7 days expiry
+
+        // Update DB if needed (optional, only if you want to store the new URL)
+        // await series.update({ thumbnail_url: newSignedUrl });
+
+        return { ...series.toJSON(), thumbnail_url: newSignedUrl };
+      }
+
+      // If no thumbnail, return as is
+      return { ...series.toJSON(), thumbnail_url: null };
     }));
+
     res.json({ total: count, series: seriesWithPoster });
   } catch (error) {
     res.status(500).json({ error: error.message });
