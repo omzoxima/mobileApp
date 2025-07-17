@@ -142,11 +142,8 @@ router.post('/process-video', async (req, res) => {
     for (const file of files) {
       const localPath = path.join(hlsDir, file);
       const remotePath = `${gcsPrefix}${file}`;
-      const contentType = file.endsWith('.m3u8')
-        ? 'application/x-mpegURL'
-        : 'video/MP2T';
-      
-      await uploadToGCS(remotePath, localPath, contentType);
+     
+      await uploadToGCS(remotePath, localPath);
     }
 
     // Get playlist URL
@@ -218,31 +215,7 @@ router.post('/process-video', async (req, res) => {
 });
 
 // JWT middleware
-function adminAuth(req, res, next) {
-  if (
-    req.path === '/login' ||
-    (req.method === 'GET' && /^\/episodes\/[^/]+\/hls-url$/.test(req.path))
-  ) {
-    return next();
-  }
 
-  const authHeader = req.headers['authorization'];
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: No token provided' });
-  }
-
-  const token = authHeader.split(' ')[1];
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.admin = payload;
-    next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
-  }
-}
-
-// Apply adminAuth middleware
-router.use(adminAuth);
 
 
 
