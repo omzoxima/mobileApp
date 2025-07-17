@@ -7,13 +7,18 @@ const bucketName = 'run-sources-tuktuki-464514-asia-south1';
 
 // Generate signed URL with additional security
 export async function generateSignedUrl(fileName, contentType, expiresInMinutes = 15, action = 'write') {
+  // 'expires' must be an absolute timestamp in milliseconds since epoch (future time)
   const options = {
     version: 'v4',
     action,
-    expires: expiresInMinutes * 60 * 1000, // This would be relative to epoch time (1970)
+    expires: Date.now() + expiresInMinutes * 60 * 1000, // Correct: absolute future timestamp
   };
 
-  
+  // Only set contentType for upload (write) actions
+  if (action === 'write' && contentType) {
+    options.contentType = contentType;
+  }
+
   const [url] = await storage
     .bucket(bucketName)
     .file(fileName)
