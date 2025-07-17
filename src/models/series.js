@@ -31,6 +31,10 @@ export default (sequelize) => {
       type: DataTypes.BOOLEAN,
       defaultValue: true
     },
+    is_popular: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
     tags: {
       type: DataTypes.ARRAY(DataTypes.STRING)
     },

@@ -6,9 +6,60 @@ import userContext from '../middlewares/userContext.js';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 
-const { Series, Episode, User, StaticContent } = models;
+const { Series, Episode, User, StaticContent,Wishlist } = models;
 const router = express.Router();
 
+
+// GET /api/wishlist/series-episodes?user_id=USER_ID
+router.get('/wishlist/series-episodes', async (req, res) => {
+  try {
+    const user_id = req.query.user_id || req.body.user_id;
+    if (!user_id) {
+      return res.status(400).json({ error: 'user_id is required' });
+    }
+
+    // Validate UUID format (simple regex for UUID v4)
+    const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidV4Regex.test(user_id)) {
+      return res.status(400).json({ error: 'Invalid user_id format' });
+    }
+
+    // Fetch wishlist records for the user
+    const wishlistRecords = await Wishlist.findAll({ where: { user_id } });
+    if (!wishlistRecords || wishlistRecords.length === 0) {
+      return res.status(404).json({ error: 'No record found' });
+    }
+
+    const result = [];
+    for (const record of wishlistRecords) {
+      if (record.series_id) {
+        // Fetch the series with all fields
+        const series = await Series.findByPk(record.series_id, { raw: true });
+        if (series) {
+          // Fetch all episodes for the series
+          const episodes = await Episode.findAll({
+            where: { series_id: record.series_id },
+            attributes: ['id', 'title', 'subtitles'],
+            raw: true
+          });
+          result.push({
+            ...series,
+            episodes
+          });
+        }
+      } 
+    }
+
+    res.json({ wishlist: result });
+  } catch (error) {
+    if (error.name === 'SequelizeDatabaseError' && error.parent && error.parent.code === '22P02') {
+      // Invalid UUID error from Postgres
+      return res.status(400).json({ error: 'Invalid user_id format' });
+    }
+    console.error('Wishlist fetch error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 // GET /api/search?q=searchstring
 router.get('/search', async (req, res) => {
   try {

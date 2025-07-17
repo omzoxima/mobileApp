@@ -16,6 +16,10 @@ export default (sequelize) => {
     price_points: {
       type: DataTypes.INTEGER
     },
+    is_popular: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
