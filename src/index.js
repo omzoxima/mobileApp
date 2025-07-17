@@ -7,7 +7,6 @@ import rewardTaskRoutes from './routes/rewardTaskRoutes.js';
 import miscRoutes from './routes/miscRoutes.js';
 import adminRoutes from './routes/adminRoutes.js'//import dummyRoutes from './routes/dummy.js';
 import cors from 'cors';
-import dummyVideoUpload from './routes/dummyVideoUpload.js'//import dummyRoutes from './routes/dummy.js';
 
 const app = express();
 app.use(cors());  
@@ -21,7 +20,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/task', rewardTaskRoutes);
 app.use('/api', miscRoutes);
 app.use('/api', adminRoutes);
-app.use('/api/dummy',dummyVideoUpload)
+
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error(err.stack);

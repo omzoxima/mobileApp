@@ -2,7 +2,7 @@ import express from 'express';
 import models from '../models/index.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import { generateSignedUrl } from '../services/gcsStorage.js';
+import { getSignedUrl } from '../services/gcsStorage.js';
 
 
 const { Series, Episode, Category,EpisodeBundlePrice } = models;
@@ -38,7 +38,7 @@ router.get('/series', async (req, res) => {
       if (thumbnail_url) {
         // Optionally: check if the URL is expired (if you store expiry info)
         // For simplicity, always generate a new signed URL here
-        const newSignedUrl = await generateSignedUrl(thumbnail_url, 60 * 24 * 7); // 7 days expiry
+        const newSignedUrl = await getSignedUrl(thumbnail_url, 60 * 24 * 7); // 7 days expiry
 
         // Update DB if needed (optional, only if you want to store the new URL)
         // await series.update({ thumbnail_url: newSignedUrl });
