@@ -2,7 +2,7 @@ import express from 'express';
 import models from '../models/index.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import{getSignedUrl,listSegmentFiles,downloadFromGCS} from '../services/gcsStorage.js'
+import{getSignedUrl,listSegmentFiles,downloadFromGCS,uploadTextToGCS} from '../services/gcsStorage.js'
 
 
 
