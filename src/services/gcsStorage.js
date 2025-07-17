@@ -34,3 +34,9 @@ export async function downloadFromGCS(gcsPath) {
   const [contents] = await storage.bucket(bucketName).file(gcsPath).download();
   return contents.toString();
 }
+export async function uploadTextToGCS(gcsPath, text, contentType = 'application/x-mpegURL') {
+  await storage.bucket(bucketName).file(gcsPath).save(text, {
+    metadata: { contentType, cacheControl: 'public, max-age=31536000' },
+    resumable: false
+  });
+}
