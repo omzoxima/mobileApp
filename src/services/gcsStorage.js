@@ -84,3 +84,12 @@ export async function listFiles(prefix, maxResults = 100) {
   });
   return files;
 }
+
+// List all .ts segment files in a GCS folder
+export async function listSegmentFiles(prefix) {
+  const [files] = await storage.bucket(bucketName).getFiles({ prefix });
+  // Return only .ts files (HLS segments)
+  return files
+    .map(file => file.name)
+    .filter(name => name.endsWith('.ts'));
+}
