@@ -10,11 +10,10 @@ export async function generateSignedUrl(fileName, contentType, expiresInMinutes 
   const options = {
     version: 'v4',
     action,
-    expires: Date.now() + expiresInMinutes * 60 * 1000,
-  
-   
+    expires: expiresInMinutes * 60 * 1000, // This would be relative to epoch time (1970)
   };
 
+  
   const [url] = await storage
     .bucket(bucketName)
     .file(fileName)
