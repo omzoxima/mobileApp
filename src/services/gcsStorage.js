@@ -40,7 +40,7 @@ export async function streamToGCS(gcsPath, contentType) {
 }
 
 // Upload single file to GCS
-export async function uploadToGCS(gcsPath, localPathOrBuffer, contentType, makePublic = false) {
+export async function uploadToGCS(gcsPath, localPathOrBuffer, makePublic = false) {
   try {
     const ext = path.extname(gcsPath).toLowerCase();
     if (!VALID_EXTENSIONS.includes(ext)) {
@@ -121,9 +121,7 @@ export async function generateSignedUrl(gcsPath, contentType, expiryMinutes = 60
       expires: Date.now() + expiryMinutes * 60 * 1000,
     };
 
-    if (action === 'write' && contentType) {
-      options.contentType = contentType;
-    }
+
 
     const [url] = await retry(async () => {
       return await storage.bucket(bucketName).file(gcsPath).getSignedUrl(options);
