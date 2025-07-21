@@ -27,6 +27,14 @@ export default (sequelize) => {
     points: {
       type: DataTypes.INTEGER
     },
+    streak_count: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0
+    },
+    disabled_streak_count: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
+    },
     task_id: {
       type: DataTypes.UUID,
       references: {

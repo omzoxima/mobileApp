@@ -25,6 +25,14 @@ export default (sequelize) => {
       type: DataTypes.INTEGER,
       defaultValue: 0
     },
+    current_streak: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0
+    },
+    last_streak_date: {
+      type: DataTypes.DATE,
+      allowNull: true
+    },
     is_active: {
       type: DataTypes.BOOLEAN,
       defaultValue: true

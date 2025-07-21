@@ -108,4 +108,127 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
   }
 });
 
+// POST /streak/episode-watched
+router.post('/streak/episode-watched', async (req, res) => {
+  try {
+    let { user_id, device_id } = req.body;
+    let user = null;
+    if (user_id) {
+      user = await User.findByPk(user_id);
+    } else if (device_id) {
+      user = await User.findOne({ where: { device_id } });
+    }
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
+    let lastStreakDateStr = null;
+    if (user.last_streak_date) {
+      const lastStreakDateObj = new Date(user.last_streak_date);
+      lastStreakDateStr = !isNaN(lastStreakDateObj) ? lastStreakDateObj.toISOString().slice(0, 10) : null;
+    }
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+
+    let streakIncreased = false;
+    let streakReset = false;
+    let awardedPoints = 0;
+    let rewardTask = null;
+    let rewardTransaction = null;
+
+    if (lastStreakDateStr === todayStr) {
+      // Already counted today, do nothing
+    } else if (lastStreakDateStr === yesterday) {
+      user.current_streak += 1;
+      user.last_streak_date = today;
+      streakIncreased = true;
+    } else {
+      user.current_streak = 1;
+      user.last_streak_date = today;
+      streakReset = true;
+    }
+    await user.save();
+
+    // Award points if streak matches a reward task
+    rewardTask = await RewardTask.findOne({ where: { type: 'streak', unlock_value: user.current_streak, is_active: true } });
+    if (rewardTask) {
+      // Check if already awarded today for this streak task
+      const alreadyStreakAwarded = await RewardTransaction.findOne({
+        where: {
+          user_id: user.id,
+          task_id: rewardTask.id,
+          type: 'earn',
+          created_at: {
+            [Op.gte]: todayStr + 'T00:00:00.000Z',
+            [Op.lt]: todayStr + 'T23:59:59.999Z'
+          }
+        }
+      });
+      if (!alreadyStreakAwarded) {
+        awardedPoints = rewardTask.points;
+        rewardTransaction = await RewardTransaction.create({
+          user_id: user.id,
+          type: 'earn',
+          points: rewardTask.points,
+          streak_count: user.current_streak,
+          disabled_streak_count: false,
+          task_id: rewardTask.id
+        });
+        user.current_reward_balance += rewardTask.points;
+        await user.save();
+      }
+    }
+
+    // --- Daily watch reward logic ---
+    // Find the daily watch task
+    const dailyWatchTask = await RewardTask.findOne({
+      where: { type: 'daily_app_open', is_active: true }
+    });
+    let dailyWatchTransaction = null;
+    let dailyWatchPointAwarded = false;
+    if (dailyWatchTask) {
+      // Check if already awarded today
+      const alreadyAwarded = await RewardTransaction.findOne({
+        where: {
+          user_id: user.id,
+          task_id: dailyWatchTask.id,
+          type: 'earn',
+          created_at: {
+            [Op.gte]: todayStr + 'T00:00:00.000Z',
+            [Op.lt]: todayStr + 'T23:59:59.999Z'
+          }
+        }
+      });
+      if (!alreadyAwarded) {
+        // Award daily point
+        dailyWatchTransaction = await RewardTransaction.create({
+          user_id: user.id,
+          type: 'earn',
+          points: dailyWatchTask.points,
+          task_id: dailyWatchTask.id
+        });
+        user.current_reward_balance += dailyWatchTask.points;
+        await user.save();
+        dailyWatchPointAwarded = true;
+      }
+    }
+    // --- End daily watch reward logic ---
+
+    res.json({
+      user_id: user.id,
+      current_streak: user.current_streak,
+      last_streak_date: user.last_streak_date,
+      streakIncreased,
+      streakReset,
+      awardedPoints,
+      rewardTask,
+      rewardTransaction,
+      dailyWatchPointAwarded,
+      dailyWatchTransaction
+    });
+  } catch (error) {
+    console.error('Error updating streak:', error);
+    res.status(500).json({ error: error.message || 'Failed to update streak' });
+  }
+});
+
 export default router; 
