@@ -5,6 +5,7 @@ import { sequelize } from '../models/index.js';
 import userContext from '../middlewares/userContext.js';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
+import { getSignedUrl } from '../services/gcsStorage.js';
 
 const { Series, Episode, User, StaticContent,Wishlist } = models;
 const router = express.Router();
@@ -36,6 +37,10 @@ router.get('/wishlist/series-episodes', async (req, res) => {
         // Fetch the series with all fields
         const series = await Series.findByPk(record.series_id, { raw: true });
         if (series) {
+          // Always generate signed URL for thumbnail_url
+          if (series.thumbnail_url) {
+            series.thumbnail_url = await getSignedUrl(series.thumbnail_url, 60 * 24 * 7);
+          }
           // Fetch all episodes for the series
           const episodes = await Episode.findAll({
             where: { series_id: record.series_id },
@@ -70,7 +75,15 @@ router.get('/search', async (req, res) => {
       include: [{ model: Episode }],
       limit: 10
     });
-    res.json({ series: seriesResults });
+    // Always generate signed URL for thumbnail_url in each series
+    const seriesWithSignedUrl = await Promise.all(seriesResults.map(async series => {
+      let obj = series.toJSON ? series.toJSON() : series;
+      if (obj.thumbnail_url) {
+        obj.thumbnail_url = await getSignedUrl(obj.thumbnail_url, 60 * 24 * 7);
+      }
+      return obj;
+    }));
+    res.json({ series: seriesWithSignedUrl });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Search failed' });
   }
