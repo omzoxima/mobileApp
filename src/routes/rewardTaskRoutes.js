@@ -24,17 +24,33 @@ router.get('/reward_task', async (req, res) => {
 
     // Get all active reward tasks
     const tasks = await RewardTask.findAll({ where: { is_active: true } });
+
     // Get all user's reward transactions for one_time tasks
     const oneTimeTaskIds = tasks.filter(t => t.repeat_type === 'one_time').map(t => t.id);
     const claimed = await RewardTransaction.findAll({
       where: { user_id: user.id, task_id: { [Op.in]: oneTimeTaskIds } }
     });
     const claimedIds = new Set(claimed.map(r => r.task_id));
+
+    // --- Get streak task ids for current streak ---
+    // Find user's current streak
+    const currentStreak = user.current_streak || 0;
+    // Get all streak tasks with unlock_value <= currentStreak
+    const streakTasks = tasks.filter(t => t.type === 'streak' && t.unlock_value && t.unlock_value <= currentStreak);
+    const streakTaskIds = streakTasks.map(t => t.id);
+    // Find which of these have been completed (earned) by the user
+    const completedStreakTransactions = await RewardTransaction.findAll({
+      where: {
+        user_id: user.id,
+        task_id: { [Op.in]: streakTaskIds },
+        type: 'earn'
+      }
+    });
+    const completedStreakTaskIds = Array.from(new Set(completedStreakTransactions.map(r => r.task_id)));
+    // --- End streak logic ---
+
     // Filter out one_time tasks already claimed
-    const availableTasks = tasks.filter(t => !(t.repeat_type === 'one_time' && claimedIds.has(t.id)));
-    // Add lock status
-    const today = new Date();
-    const result = availableTasks.map(task => ({
+    const result = tasks.map(task => ({
       id: task.id,
       name: task.name,
       description: task.description,
@@ -43,12 +59,12 @@ router.get('/reward_task', async (req, res) => {
       trigger: task.trigger,
       repeat_type: task.repeat_type,
       unlock_value: task.unlock_value,
-      max_count: task.max_count,
-      lock: (task.start_date && task.end_date)
-        ? !(today >= task.start_date && today <= task.end_date)
-        : true
+      max_count: task.max_count
     }));
-    res.json(result);
+    res.json({
+      tasks: result,
+      completed_streak_task_ids: completedStreakTaskIds
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
