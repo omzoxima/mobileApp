@@ -361,7 +361,7 @@ router.post('/action', userContext, async (req, res) => {
     if (!series_id && !episode_id) {
       return res.status(400).json({ error: 'series_id or episode_id is required' });
     }
-    if (!['like', 'share', 'subscribe','unsubscribe'].includes(action)) {
+    if (!['like', 'share', 'subscribe','unsubscribe','unlike'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action. Must be like, share, or subscribe.' });
     }
     // Determine target model
@@ -370,6 +370,8 @@ router.post('/action', userContext, async (req, res) => {
     if (action === 'share') Model = models.Share;
     if (action === 'subscribe') Model = models.Wishlist;
     if (action === 'unsubscribe') Model = models.Wishlist;
+    if (action === 'unlike') Model = models.Like;
+
 
     // Build where clause
     const where = { };
@@ -387,7 +389,13 @@ router.post('/action', userContext, async (req, res) => {
         return res.status(404).json({ error: 'No matching wishlist entries found' });
       }
       return res.json({ success: true, action, removed: deletedCount });
-    } else {
+    } if (action === 'unlike') {
+      const deletedCount = await Model.destroy({ where });
+      if (deletedCount === 0) {
+        return res.status(404).json({ error: 'No matching Like entries found' });
+      }
+      return res.json({ success: true, action, removed: deletedCount });
+    }else {
       // Deduplicate like/subscribe
       [record] = await Model.findOrCreate({ where, defaults: { created_at: new Date(), id: uuidv4() } });
     }
