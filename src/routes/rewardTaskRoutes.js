@@ -218,7 +218,9 @@ router.post('/streak/episode-watched', async (req, res) => {
           }
         }
       });
-      if (!alreadyAwarded) {
+      // Only award if user was created before today
+      const userCreatedDate = user.created_at ? new Date(user.created_at).toISOString().slice(0, 10) : null;
+      if (!alreadyAwarded && userCreatedDate && userCreatedDate < todayStr) {
         // Award daily point
         dailyWatchTransaction = await RewardTransaction.create({
           user_id: user.id,
@@ -231,7 +233,7 @@ router.post('/streak/episode-watched', async (req, res) => {
         user.current_reward_balance += dailyWatchTask.points;
         await user.save();
         dailyWatchPointAwarded = true;
-      }
+      } 
     }
     // --- End daily watch reward logic ---
 
