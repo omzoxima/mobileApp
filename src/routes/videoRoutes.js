@@ -98,7 +98,37 @@ router.get('/series/:seriesId/episodes', async (req, res) => {
       where: { series_id: req.params.seriesId },
       order: [['episode_number', 'ASC']]
     });
-    res.json(episodes);
+
+    // Get user by x-device-id header
+    const deviceId = req.headers['x-device-id'];
+    let user = null;
+    if (deviceId) {
+      user = await models.User.findOne({ where: { device_id: deviceId } });
+    }
+
+    let likedEpisodeIds = [];
+    let wishlisted = false;
+    if (user) {
+      // Get all liked episode ids for this user
+      const likes = await models.Like.findAll({
+        where: { user_id: user.id, episode_id: episodes.map(e => e.id) }
+      });
+      likedEpisodeIds = likes.map(l => l.episode_id);
+      // Check if this series is in the user's wishlist
+      const wishlist = await models.Wishlist.findOne({
+        where: { user_id: user.id, series_id: req.params.seriesId }
+      });
+      wishlisted = !!wishlist;
+    }
+
+    // Add liked and wishlisted keys to each episode
+    const episodesWithFlags = episodes.map(ep => ({
+      ...ep.toJSON(),
+      liked: likedEpisodeIds.includes(ep.id),
+      wishlisted
+    }));
+
+    res.json(episodesWithFlags);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
