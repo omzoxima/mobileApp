@@ -114,7 +114,9 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
       user_id: userId,
       task_id: taskId,
       type: 'earn',
-      points: task.points
+      points: task.points,
+      created_at: new Date(),
+      updated_at: new Date()
     });
 
     res.status(201).json({ message: 'Task completed, points awarded', transaction, new_balance });
@@ -187,7 +189,9 @@ router.post('/streak/episode-watched', async (req, res) => {
           points: rewardTask.points,
           streak_count: user.current_streak,
           disabled_streak_count: false,
-          task_id: rewardTask.id
+          task_id: rewardTask.id,
+          created_at: new Date(),
+          updated_at: new Date()
         });
         user.current_reward_balance += rewardTask.points;
         await user.save();
@@ -220,7 +224,9 @@ router.post('/streak/episode-watched', async (req, res) => {
           user_id: user.id,
           type: 'earn',
           points: dailyWatchTask.points,
-          task_id: dailyWatchTask.id
+          task_id: dailyWatchTask.id,
+          created_at: new Date(),
+          updated_at: new Date()
         });
         user.current_reward_balance += dailyWatchTask.points;
         await user.save();

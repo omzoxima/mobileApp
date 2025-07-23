@@ -121,7 +121,9 @@ router.get('/profile', async (req, res) => {
         Name: 'Guest User',
         login_type: 'guest',
         current_reward_balance: 0,
-        is_active: true
+        is_active: true,
+        created_at: new Date(),
+        updated_at: new Date()
       }, { 
         transaction: t,
         returning: true
@@ -147,7 +149,8 @@ router.get('/profile', async (req, res) => {
           task_id: task.id,
           type: 'earn',
           points: task.points,
-          created_at: today
+          created_at: today,
+          updated_at: new Date()
         });
         pointsGranted += task.points;
       }
@@ -283,10 +286,13 @@ router.post('/episode/access', async (req, res) => {
           episode_id,
           series_id,
           user_id,
-          is_locked: lock
+          is_locked: lock,
+          created_at: new Date(),
+          updated_at: new Date()
         });
       } else {
         access.is_locked = lock;
+        access.updated_at = new Date();
         await access.save();
       }
       return res.json({ message: `Access ${lock ? 'locked' : 'unlocked'}`, access });
@@ -303,6 +309,7 @@ router.post('/episode/access', async (req, res) => {
         user.current_reward_balance -= 1;
         await user.save();
         access.is_locked = false;
+        access.updated_at = new Date();
         await access.save();
         return res.json({ message: 'Unlocked using points', access });
       } else {
@@ -319,17 +326,13 @@ router.post('/episode/access', async (req, res) => {
           episode_id,
           series_id,
           user_id,
-          is_locked: false
+          is_locked: false,
+          created_at: new Date(),
+          updated_at: new Date()
         });
         return res.json({ message: 'Unlocked using points', access });
       } else {
-        access = await EpisodeUserAccess.create({
-          id: uuidv4(),
-          episode_id,
-          series_id,
-          user_id,
-          is_locked: true
-        });
+       access=[];
         return res.json({ message: 'Locked, not enough points', access });
       }
     }
@@ -382,7 +385,7 @@ router.post('/action', userContext, async (req, res) => {
     let record;
     if (action === 'share') {
       // Allow multiple shares
-      record = await Model.create({ ...where, created_at: new Date(), id: uuidv4() });
+      record = await Model.create({ ...where, created_at: new Date(), updated_at: new Date() });
     } else if (action === 'unsubscribe') {
       const deletedCount = await Model.destroy({ where });
       if (deletedCount === 0) {
@@ -397,7 +400,7 @@ router.post('/action', userContext, async (req, res) => {
       return res.json({ success: true, action, removed: deletedCount });
     }else {
       // Deduplicate like/subscribe
-      [record] = await Model.findOrCreate({ where, defaults: { created_at: new Date(), id: uuidv4() } });
+      [record] = await Model.findOrCreate({ where, defaults: { created_at: new Date(), updated_at: new Date() } });
     }
     res.json({ success: true, action, record });
   } catch (error) {
