@@ -69,6 +69,7 @@ router.get('/series', async (req, res) => {
     const { page = 1, limit = 10, category } = req.query;
     const where = {};
     if (category) where.category_id = category;
+    where.status = 'Active';
     const { count, rows } = await Series.findAndCountAll({
       where,
       offset: (page - 1) * limit,

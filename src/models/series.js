@@ -38,6 +38,10 @@ export default (sequelize) => {
     tags: {
       type: DataTypes.ARRAY(DataTypes.STRING)
     },
+    status: {
+      type: DataTypes.ENUM('Draft', 'Active', 'Inactive'),
+      defaultValue: 'Draft'
+    },
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
