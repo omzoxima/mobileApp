@@ -36,7 +36,7 @@ router.get('/wishlist/series-episodes', async (req, res) => {
       if (record.series_id) {
         // Fetch the series with all fields
         const series = await Series.findByPk(record.series_id, { raw: true });
-        if (series) {
+        if (series && series.status === 'Active') {
           // Always generate signed URL for thumbnail_url
           if (series.thumbnail_url) {
             series.thumbnail_url = await getSignedUrl(series.thumbnail_url, 60 * 24 * 7);
