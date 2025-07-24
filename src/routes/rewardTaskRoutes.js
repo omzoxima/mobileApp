@@ -255,4 +255,68 @@ router.post('/streak/episode-watched', async (req, res) => {
   }
 });
 
+// GET /user-transaction
+router.get('/user-transaction', async (req, res) => {
+  try {
+    const deviceId = req.headers['x-device-id'];
+    if (!deviceId) {
+      return res.status(400).json({ error: 'x-device-id header is required' });
+    }
+    const user = await User.findOne({ where: { device_id: deviceId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found for provided device_id' });
+    }
+
+    // Get all reward transactions for the user
+    const transactions = await RewardTransaction.findAll({
+      where: { user_id: user.id },
+      order: [['created_at', 'DESC']]
+    });
+
+    // For each transaction, if episode_id exists, add episode title
+    const episodeIds = transactions.map(t => t.episode_id).filter(Boolean);
+    let episodes = [];
+    if (episodeIds.length > 0) {
+      episodes = await models.Episode.findAll({
+        where: { id: episodeIds },
+        attributes: ['id', 'title']
+      });
+    }
+    const episodeMap = {};
+    episodes.forEach(ep => { episodeMap[ep.id] = ep.title; });
+    const transactionsWithEpisode = transactions.map(t => ({
+      ...t.toJSON(),
+      episode_title: t.episode_id ? (episodeMap[t.episode_id] || null) : null
+    }));
+
+    // Get all episode access records for the user
+    const episodeAccessRecords = await models.EpisodeUserAccess.findAll({
+      where: { user_id: user.id },
+      attributes: ['episode_id']
+    });
+    // Get episode titles for accessed episodes
+    const accessEpisodeIds = episodeAccessRecords.map(e => e.episode_id);
+    let accessEpisodes = [];
+    if (accessEpisodeIds.length > 0) {
+      accessEpisodes = await models.Episode.findAll({
+        where: { id: accessEpisodeIds },
+        attributes: ['id', 'title']
+      });
+    }
+    const accessEpisodeMap = {};
+    accessEpisodes.forEach(ep => { accessEpisodeMap[ep.id] = ep.title; });
+    const episodeAccess = episodeAccessRecords.map(e => ({
+      episode_id: e.episode_id,
+      title: accessEpisodeMap[e.episode_id] || null
+    }));
+
+    res.json({
+      transactions: transactionsWithEpisode,
+      episode_access: episodeAccess
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router; 
