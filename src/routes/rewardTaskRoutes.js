@@ -273,20 +273,20 @@ router.get('/user-transaction', async (req, res) => {
       order: [['created_at', 'DESC']]
     });
 
-    // For each transaction, if episode_id exists, add episode title
-    const episodeIds = transactions.map(t => t.episode_id).filter(Boolean);
-    let episodes = [];
-    if (episodeIds.length > 0) {
-      episodes = await models.Episode.findAll({
-        where: { id: episodeIds },
-        attributes: ['id', 'title']
+    // For each transaction, if task_id exists, add task name
+    const taskIds = transactions.map(t => t.task_id).filter(Boolean);
+    let tasks = [];
+    if (taskIds.length > 0) {
+      tasks = await RewardTask.findAll({
+        where: { id: taskIds },
+        attributes: ['id', 'name']
       });
     }
-    const episodeMap = {};
-    episodes.forEach(ep => { episodeMap[ep.id] = ep.title; });
-    const transactionsWithEpisode = transactions.map(t => ({
+    const taskMap = {};
+    tasks.forEach(task => { taskMap[task.id] = task.name; });
+    const transactionsWithTask = transactions.map(t => ({
       ...t.toJSON(),
-      episode_title: t.episode_id ? (episodeMap[t.episode_id] || null) : null
+      task_name: t.task_id ? (taskMap[t.task_id] || null) : null
     }));
 
     // Get all episode access records for the user
@@ -311,7 +311,7 @@ router.get('/user-transaction', async (req, res) => {
     }));
 
     res.json({
-      transactions: transactionsWithEpisode,
+      transactions: transactionsWithTask,
       episode_access: episodeAccess
     });
   } catch (error) {
