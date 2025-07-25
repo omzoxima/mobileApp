@@ -294,21 +294,51 @@ router.get('/user-transaction', async (req, res) => {
       where: { user_id: user.id },
       attributes: ['episode_id']
     });
-    // Get episode titles for accessed episodes
+    // Get episode details for accessed episodes
     const accessEpisodeIds = episodeAccessRecords.map(e => e.episode_id);
     let accessEpisodes = [];
     if (accessEpisodeIds.length > 0) {
       accessEpisodes = await models.Episode.findAll({
         where: { id: accessEpisodeIds },
-        attributes: ['id', 'title']
+        attributes: ['id', 'title', 'series_id', 'episode_number']
       });
     }
+    // Get unique series ids
+    const seriesIds = [...new Set(accessEpisodes.map(ep => ep.series_id).filter(Boolean))];
+    let seriesList = [];
+    if (seriesIds.length > 0) {
+      seriesList = await models.Series.findAll({
+        where: { id: seriesIds },
+        attributes: ['id', 'title', 'thumbnail_url']
+      });
+    }
+    // Generate signed URLs for each unique series only once
+    const { getSignedUrl } = await import('../services/gcsStorage.js');
+    const seriesSignedUrlMap = {};
+    for (const s of seriesList) {
+      if (s.thumbnail_url) {
+        seriesSignedUrlMap[s.id] = await getSignedUrl(s.thumbnail_url, 60 * 24 * 7);
+      } else {
+        seriesSignedUrlMap[s.id] = null;
+      }
+    }
+    // Map series id to title and signed url
+    const seriesTitleMap = {};
+    seriesList.forEach(s => { seriesTitleMap[s.id] = s.title; });
+    // Map episode id to episode details
     const accessEpisodeMap = {};
-    accessEpisodes.forEach(ep => { accessEpisodeMap[ep.id] = ep.title; });
-    const episodeAccess = episodeAccessRecords.map(e => ({
-      episode_id: e.episode_id,
-      title: accessEpisodeMap[e.episode_id] || null
-    }));
+    accessEpisodes.forEach(ep => { accessEpisodeMap[ep.id] = ep; });
+    const episodeAccess = episodeAccessRecords.map(e => {
+      const ep = accessEpisodeMap[e.episode_id];
+      return {
+        episode_id: e.episode_id,
+        title: ep ? ep.title : null,
+        series_id: ep ? ep.series_id : null,
+        series_title: ep && ep.series_id ? seriesTitleMap[ep.series_id] || null : null,
+        episode_number: ep ? ep.episode_number : null,
+        series_thumbnail_url: ep && ep.series_id ? seriesSignedUrlMap[ep.series_id] || null : null
+      };
+    });
 
     res.json({
       transactions: transactionsWithTask,
