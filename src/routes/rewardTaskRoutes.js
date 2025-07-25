@@ -134,7 +134,7 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
 // POST /streak/episode-watched
 router.post('/streak/episode-watched', async (req, res) => {
   try {
-    let { user_id, device_id } = req.body;
+    let { user_id, device_id, series_id, episode_id } = req.body; // series_id and episode_id are optional
     let user = null;
     if (user_id) {
       user = await User.findByPk(user_id);
