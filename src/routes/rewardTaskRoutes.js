@@ -31,7 +31,7 @@ router.get('/reward_task', async (req, res) => {
       where: { user_id: user.id, task_id: { [Op.in]: oneTimeTaskIds } }
     });
     const claimedIds = new Set(claimed.map(r => r.task_id));
-
+   //console.log(claimedIds);
     // --- Get streak task ids for current streak ---
     // Find user's current streak
     const currentStreak = user.current_streak || 0;
@@ -61,9 +61,14 @@ router.get('/reward_task', async (req, res) => {
       unlock_value: task.unlock_value,
       max_count: task.max_count
     }));
+    // Combine claimed one-time and completed streak task IDs for completed_streak_task_ids
+    const allCompletedTaskIds = Array.from(new Set([
+      ...Array.from(claimedIds),
+      ...completedStreakTaskIds
+    ]));
     res.json({
       tasks: result,
-      completed_streak_task_ids: completedStreakTaskIds
+      completed_streak_task_ids: allCompletedTaskIds
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
