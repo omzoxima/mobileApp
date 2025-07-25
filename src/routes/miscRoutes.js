@@ -105,12 +105,12 @@ router.get('/profile', async (req, res) => {
       const token = authHeader.split(' ')[1];
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       user = await User.findByPk(payload.userId, {
-        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date']
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
       });
     } else if (deviceId) {
       user = await User.findOne({
         where: { device_id: deviceId },
-        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date']
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
       });
     }
     
@@ -123,6 +123,7 @@ router.get('/profile', async (req, res) => {
         login_type: 'guest',
         current_reward_balance: 0,
         is_active: true,
+        phone_or_email:'Guest User',
         created_at: new Date(),
         updated_at: new Date()
       }, { 
@@ -177,7 +178,8 @@ router.get('/profile', async (req, res) => {
           current_reward_balance: user.current_reward_balance,
           lock: true, // New users typically start locked
           start_date: user.start_date,
-          end_date: user.end_date
+          end_date: user.end_date,
+          phone_or_email: user.phone_or_email
         },
         pointsGranted
       });
@@ -198,7 +200,8 @@ router.get('/profile', async (req, res) => {
         current_reward_balance: user.current_reward_balance,
         lock,
         start_date: user.start_date,
-        end_date: user.end_date
+        end_date: user.end_date,
+        phone_or_email: user.phone_or_email
       },
       pointsGranted: 0
     });

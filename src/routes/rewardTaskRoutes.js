@@ -163,10 +163,12 @@ router.post('/streak/episode-watched', async (req, res) => {
     } else if (lastStreakDateStr === yesterday) {
       user.current_streak += 1;
       user.last_streak_date = today;
+      user.updated_at = new Date();
       streakIncreased = true;
     } else {
       user.current_streak = 1;
       user.last_streak_date = today;
+      user.updated_at = new Date();
       streakReset = true;
     }
     await user.save();
