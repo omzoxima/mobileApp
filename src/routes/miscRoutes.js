@@ -6,7 +6,7 @@ import userContext from '../middlewares/userContext.js';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { getSignedUrl } from '../services/gcsStorage.js';
-import axios from 'axios';
+
 
 const { Series, Episode, User, StaticContent, Wishlist, OTP } = models;
 const router = express.Router();
@@ -123,7 +123,7 @@ router.get('/profile', async (req, res) => {
         login_type: 'guest',
         current_reward_balance: 0,
         is_active: true,
-        phone_or_email:'Guest User',
+       // phone_or_email:'Guest User',
         created_at: new Date(),
         updated_at: new Date()
       }, { 
@@ -412,104 +412,6 @@ router.post('/action', userContext, async (req, res) => {
   }
 });
 
-// Helper to generate a 6-digit OTP
-function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
 
-// POST /api/send-otp
-router.post('/send-otp', async (req, res) => {
-  const { mobile } = req.body;
-  if (!mobile) {
-    return res.status(400).json({ error: 'Mobile number is required' });
-  }
-
-  // 1. Check for recent, unexpired, unverified OTP
-  const now = new Date();
-  const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
-  let otpRecord = await OTP.findOne({
-    where: {
-      mobile,
-      verified: false,
-      expires_at: { [Op.gt]: now },
-      created_at: { [Op.gt]: oneMinuteAgo }
-    }
-  });
-
-  let otp;
-  let expiresAt;
-  if (otpRecord) {
-    // Resend the same OTP
-    otp = otpRecord.otp;
-    expiresAt = otpRecord.expires_at;
-  } else {
-    // Invalidate previous OTPs
-    await OTP.update({ verified: true }, { where: { mobile } });
-    // Generate new OTP
-    otp = generateOTP();
-    expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
-    await OTP.create({
-      mobile,
-      otp,
-      expires_at: expiresAt,
-      created_at: now,
-      updated_at: now,
-      verified: false
-    });
-  }
-
-  // Prepare SMS message using your template
-  const message = `Your OTP for login is ${otp}. Do not share it with anyone. Valid for 10 minutes. - 6200TUKTUKI.`;
-
-  // Send SMS via Pinnacle
-  try {
-    // Replace with your actual Pinnacle API details
-    const PINNACLE_API_URL = 'https://www.pinnaclesms.com/api/v1/sms/send';
-    const PINNACLE_API_KEY = 'R9lJ0gfOh4w7';
-    const SENDER_ID = '6200TUKTUKI';
-
-    const payload = {
-      api_key: PINNACLE_API_KEY,
-      sender: SENDER_ID,
-      to: mobile,
-      message: message
-    };
-
-    await axios.post(PINNACLE_API_URL, payload);
-
-    res.json({ success: true, message: 'OTP sent successfully' });
-  } catch (error) {
-    console.error('Pinnacle SMS error:', error.response?.data || error.message);
-    res.status(500).json({ error: 'Failed to send OTP' });
-  }
-});
-
-// POST /api/verify-otp
-router.post('/verify-otp', async (req, res) => {
-  const { mobile, otp } = req.body;
-  if (!mobile || !otp) {
-    return res.status(400).json({ error: 'Mobile and OTP are required' });
-  }
-
-  // Find unexpired, unverified OTP
-  const otpRecord = await OTP.findOne({
-    where: {
-      mobile,
-      otp,
-      verified: false,
-      expires_at: { [Op.gt]: new Date() }
-    }
-  });
-
-  if (!otpRecord) {
-    return res.status(400).json({ error: 'Invalid or expired OTP' });
-  }
-
-  otpRecord.verified = true;
-  otpRecord.updated_at = new Date();
-  await otpRecord.save();
-
-  res.json({ success: true, message: 'OTP verified successfully' });
-});
 
 export default router; 
