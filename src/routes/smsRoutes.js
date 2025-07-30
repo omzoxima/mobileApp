@@ -3,6 +3,7 @@ import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import { Op } from 'sequelize';
 import models from '../models/index.js';
+import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
@@ -11,7 +12,9 @@ const PINNACLE_ACCESS_KEY = 'R9lJ0gfOh4w7';
 const DEFAULT_SENDER = 'TKIENT';
 const DEFAULT_DLT_ENTITY_ID = '1001186179422431539';
 const DEFAULT_DLT_TEMPLATE_ID = '1007685518923891699';
-
+function generateJwt(user) {
+  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+}
 // Pinnacle SMS function based on working curl command
 async function sendPinnacleSMS(accesskey, obj) {
   try {
@@ -152,6 +155,12 @@ router.post('/send-otp', async (req, res) => {
 router.post('/verify-otp', async (req, res) => {
   try {
     const { mobile, otp } = req.body;
+    const deviceId = req.headers['x-device-id'];
+    
+    // Check for mandatory x-device-id header
+    if (!deviceId) {
+      return res.status(400).json({ error: 'x-device-id header is mandatory' });
+    }
     
     if (!mobile || !otp) {
       return res.status(400).json({ error: 'Mobile number and OTP are required' });
@@ -166,7 +175,7 @@ router.post('/verify-otp', async (req, res) => {
     const cleanNumber = mobile.replace(/^91/, '');
 
     // Find the OTP record
-    const { OTP } = models;
+    const { OTP,User,RewardTransaction} = models;
     const otpRecord = await OTP.findOne({
       where: {
         mobile: cleanNumber,
@@ -191,11 +200,78 @@ router.post('/verify-otp', async (req, res) => {
       verified: true,
       updated_at: new Date()
     });
-
+    
+    let user;
+    if (deviceId) {
+      user = await User.findOne({ where: { device_id: deviceId } });
+      if (user) {
+        // Update user with provider info
+        if (cleanNumber) user.phone_or_email = cleanNumber;
+        user.login_type = 'mobile';
+        user.is_active = true;
+        user.updated_at = new Date();
+        await user.save();
+      }
+    }
+    
+    if (!user) {
+      // Find by provider id
+      let where = {};
+      where['phone_or_email'] = cleanNumber;
+      user = await User.findOne({ where });
+      if(user){
+        if (cleanNumber) user.phone_or_email = cleanNumber;
+        user.login_type = 'mobile';
+        user.is_active = true;
+        user.updated_at = new Date();
+        user.device_id = deviceId;
+        await user.save();
+      }
+      if (!user) {
+        user = await User.create({
+          phone_or_email: cleanNumber || '',
+          Name: 'Mobile login User',
+          login_type: 'mobile',
+          is_active: true,
+          current_reward_balance: 0,
+          device_id: deviceId || null,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+      }
+    }
+    const jwtToken = generateJwt(user);
+    // Award login reward points only if not already given
+    const RewardTask = models.RewardTask || models.rewardTask;
+    if (RewardTask) {
+      const loginReward = await RewardTask.findOne({ where: { type: 'login' } });
+      if (loginReward && loginReward.points) {
+        // Check if reward already given
+        const alreadyGiven = await RewardTransaction.findOne({
+          where: { user_id: user.id, type: 'login' ,task_id: loginReward.id}
+        });
+        if (!alreadyGiven) {
+          user.current_reward_balance += loginReward.points;
+          user.updated_at = new Date();
+          await user.save();
+          await RewardTransaction.create({
+            user_id: user.id,
+            type: 'login',
+            points: loginReward.points,
+            created_at: new Date(),
+            updated_at: new Date(),
+            task_id: loginReward.id
+          });
+        }
+      }
+    }
+  
     res.json({
       success: true,
       message: 'OTP verified successfully',
-      mobile: cleanNumber
+      mobile: cleanNumber,
+      user:user,
+      token:jwtToken
     });
 
   } catch (error) {
