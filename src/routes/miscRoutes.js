@@ -32,9 +32,11 @@ router.get('/wishlist/series-episodes', async (req, res) => {
       return res.status(404).json({ error: 'No record found' });
     }
 
-    const result = [];
+    // Group wishlist records by series_id to avoid duplicates
+    const seriesMap = new Map();
+    
     for (const record of wishlistRecords) {
-      if (record.series_id) {
+      if (record.series_id && !seriesMap.has(record.series_id)) {
         // Fetch the series with all fields
         const series = await Series.findByPk(record.series_id, { raw: true });
         if (series && series.status === 'Active') {
@@ -48,13 +50,17 @@ router.get('/wishlist/series-episodes', async (req, res) => {
             attributes: ['id', 'title', 'subtitles'],
             raw: true
           });
-          result.push({
+          
+          seriesMap.set(record.series_id, {
             ...series,
             episodes
           });
         }
       } 
     }
+
+    // Convert map values to array
+    const result = Array.from(seriesMap.values());
 
     res.json({ wishlist: result });
   } catch (error) {
