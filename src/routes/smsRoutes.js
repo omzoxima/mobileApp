@@ -20,7 +20,7 @@ async function sendPinnacleSMS(accesskey, obj) {
   try {
     const data = JSON.stringify(obj);
     
-    const config = {
+        const config = {
       method: 'post',
       url: 'https://transapi.pinnacle.in/genericapi/JSONGenericReceiver',
       headers: { 
@@ -28,7 +28,10 @@ async function sendPinnacleSMS(accesskey, obj) {
       },
       data: data
     };
-   
+    
+    // Print cURL command
+  //
+    
     const response = await axios(config);
     return response.data;
   } catch (error) {
@@ -102,15 +105,22 @@ router.post('/send-otp', async (req, res) => {
 
     // Store OTP in database
     const { OTP } = models;
-    await OTP.create({
-      id: uuidv4(),
-      mobile: cleanNumber,
-      otp: otp,
-      verified: false,
-      expires_at: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
-      created_at: new Date(),
-      updated_at: new Date()
-    });
+    try {
+      console.log('Attempting to store OTP in database:', { mobile: cleanNumber, otp: otp });
+      await OTP.create({
+        id: uuidv4(),
+        mobile: cleanNumber,
+        otp: otp,
+        verified: false,
+        expires_at: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+      //console.log('✅ OTP stored successfully in database');
+    } catch (dbError) {
+     // console.error('❌ Database error storing OTP:', dbError.message);
+      // Continue with SMS sending even if database fails
+    }
 
     // Send SMS via Pinnacle SMS API using working format
     const smsPayload = {
@@ -176,6 +186,8 @@ router.post('/verify-otp', async (req, res) => {
 
     // Find the OTP record
     const { OTP,User,RewardTransaction} = models;
+   // console.log('🔍 Searching for OTP record:', { mobile: cleanNumber, otp: otp });
+    
     const otpRecord = await OTP.findOne({
       where: {
         mobile: cleanNumber,
@@ -188,7 +200,17 @@ router.post('/verify-otp', async (req, res) => {
       order: [['created_at', 'DESC']] // Get the latest OTP
     });
 
+   // console.log('📋 OTP record found:', otpRecord ? 'Yes' : 'No');
+
     if (!otpRecord) {
+      // Let's check what OTPs exist for this mobile number
+      const allOtps = await OTP.findAll({
+        where: { mobile: cleanNumber },
+        order: [['created_at', 'DESC']],
+        limit: 5
+      });
+      //console.log('📊 All OTPs for this mobile:', allOtps.map(o => ({ otp: o.otp, verified: o.verified, created_at: o.created_at })));
+      
       return res.status(400).json({ 
         error: 'Invalid OTP or OTP expired',
         message: 'Please request a new OTP'
