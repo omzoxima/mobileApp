@@ -5,6 +5,7 @@ import authRoutes from './routes/authRoutes.js';
 //import config from './config/index.js';
 import rewardTaskRoutes from './routes/rewardTaskRoutes.js';
 import miscRoutes from './routes/miscRoutes.js';
+import smsRoutes from './routes/smsRoutes.js';
 //import adminRoutes from './routes/adminRoutes.js'//import dummyRoutes from './routes/dummy.js';
 import cors from 'cors';
 
@@ -19,6 +20,7 @@ app.use('/api', videoRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/task', rewardTaskRoutes);
 app.use('/api', miscRoutes);
+app.use('/api/sms', smsRoutes);
 //app.use('/api', adminRoutes);
 
 // Error handling middleware
