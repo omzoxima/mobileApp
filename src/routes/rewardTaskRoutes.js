@@ -356,4 +356,99 @@ router.get('/user-transaction', async (req, res) => {
   }
 });
 
+// POST /episode-bundle-purchase
+router.post('/episode-bundle-purchase', async (req, res) => {
+  try {
+    const { episode_bundle_id } = req.body;
+    const deviceId = req.headers['x-device-id'];
+    
+    // Validate required parameters
+    if (!deviceId) {
+      return res.status(400).json({ error: 'x-device-id header is mandatory' });
+    }
+    
+    if (!episode_bundle_id) {
+      return res.status(400).json({ error: 'episode_bundle_id is required' });
+    }
+
+    // Find user by device_id
+    const user = await User.findOne({ where: { device_id: deviceId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found for provided device_id' });
+    }
+
+    // Find episode bundle
+    const { EpisodeBundlePrice } = models;
+    const episodeBundle = await EpisodeBundlePrice.findByPk(episode_bundle_id);
+    if (!episodeBundle) {
+      return res.status(404).json({ error: 'Episode bundle not found' });
+    }
+
+    const currentTime = new Date();
+    let transactionData = {
+      user_id: user.id,
+      episode_bundle_id: episode_bundle_id,
+      type: 'payment_earn',
+      points: 0,
+      created_at: currentTime,
+      updated_at: currentTime
+    };
+
+    // Check if bundle is subscription type (has start_date and end_date logic)
+    if (episodeBundle.bundle_name && episodeBundle.bundle_name.toLowerCase().includes('subscription')) {
+      // Handle subscription - update user start_time and end_time
+      const startTime = new Date();
+      const endTime = new Date();
+      // Use bundle_count as number of months for subscription duration
+      const subscriptionMonths = episodeBundle.bundle_count || 1; // Default to 1 month if not specified
+      endTime.setMonth(endTime.getMonth() + subscriptionMonths);
+      
+      user.start_date = startTime;
+      user.end_date = endTime;
+      user.updated_at = currentTime;
+      await user.save();
+      
+      transactionData.points = 0; // No points for subscription
+    } else {
+      // Handle episode count bundle - add points to user
+      const pointsToAdd = episodeBundle.bundle_count || 0;
+      user.current_reward_balance += pointsToAdd;
+      user.updated_at = currentTime;
+      await user.save();
+      
+      transactionData.points = pointsToAdd;
+    }
+
+    // Create reward transaction record
+    const transaction = await RewardTransaction.create(transactionData);
+
+    res.json({
+      success: true,
+      message: 'Episode bundle purchase successful',
+      user: {
+        id: user.id,
+        current_reward_balance: user.current_reward_balance,
+        start_date: user.start_date,
+        end_date: user.end_date
+      },
+      episode_bundle: {
+        id: episodeBundle.id,
+        bundle_name: episodeBundle.bundle_name,
+        bundle_count: episodeBundle.bundle_count,
+        price_points: episodeBundle.price_points
+      },
+      transaction: {
+        id: transaction.id,
+        type: transaction.type,
+        points: transaction.points,
+        created_at: transaction.created_at
+      }
+    });
+
+  } catch (error) {
+    console.error('Episode bundle purchase error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process episode bundle purchase' });
+  }
+});
+
 export default router; 
