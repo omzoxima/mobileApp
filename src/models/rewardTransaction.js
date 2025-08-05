@@ -21,6 +21,13 @@ export default (sequelize) => {
         key: 'id'
       }
     },
+    episode_bundle_id: {
+      type: DataTypes.UUID,
+      references: {
+        model: 'episode_bundle_prices',
+        key: 'id'
+      }
+    },
     type: {
       type: DataTypes.STRING // 'earn' or 'spend'
     },
