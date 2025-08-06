@@ -7,6 +7,10 @@ export default (sequelize) => {
       primaryKey: true,
       defaultValue: DataTypes.UUIDV4
     },
+    productId: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
     bundle_name: {
       type: DataTypes.STRING
     },
