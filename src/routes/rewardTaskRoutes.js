@@ -397,7 +397,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
     };
 
     // Check if bundle is subscription type (has start_date and end_date logic)
-    if (episodeBundle.bundle_name && episodeBundle.bundle_name.toLowerCase().includes('Package')) {
+    if (episodeBundle.bundle_name && episodeBundle.bundle_name.includes('Package')) {
       // Handle subscription - update user start_time and end_time
       const startTime = new Date();
       const endTime = new Date();
