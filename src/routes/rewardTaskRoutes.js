@@ -361,7 +361,13 @@ router.get('/user-transaction', async (req, res) => {
 // POST /episode-bundle-purchase
 router.post('/episode-bundle-purchase', async (req, res) => {
   try {
-    const { episode_bundle_id } = req.body;
+    const { 
+      episode_bundle_id, 
+      product_id, 
+      transaction_id, 
+      receipt, 
+      source 
+    } = req.body;
     const deviceId = req.headers['x-device-id'];
     
     // Validate required parameters
@@ -393,7 +399,11 @@ router.post('/episode-bundle-purchase', async (req, res) => {
       type: 'payment_earn',
       points: 0,
       created_at: currentTime,
-      updated_at: currentTime
+      updated_at: currentTime,
+      product_id: product_id || null,
+      transaction_id: transaction_id || null,
+      receipt: receipt || null,
+      source: source || null
     };
 
     // Check if bundle is subscription type (has start_date and end_date logic)
@@ -443,7 +453,11 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         id: transaction.id,
         type: transaction.type,
         points: transaction.points,
-        created_at: transaction.created_at
+        created_at: transaction.created_at,
+        product_id: transaction.product_id,
+        transaction_id: transaction.transaction_id,
+        receipt: transaction.receipt,
+        source: transaction.source
       }
     });
 
