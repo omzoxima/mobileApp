@@ -52,6 +52,22 @@ export default (sequelize) => {
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
+    },
+    product_id: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    transaction_id: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    receipt: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    source: {
+      type: DataTypes.STRING,
+      allowNull: true
     }
   }, {
     tableName: 'reward_transactions',
