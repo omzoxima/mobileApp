@@ -313,9 +313,20 @@ router.post('/episode/access', async (req, res) => {
       if (!access.is_locked) {
         return res.json({ message: 'Already unlocked', access });
       }
-      // If locked, check user points
+      // If locked, check user subscription status
       const user = await User.findByPk(user_id);
-      if (user.current_reward_balance > 0) {
+      const currentTime = new Date();
+      const hasActiveSubscription = user.start_date && user.end_date && 
+        currentTime >= user.start_date && currentTime <= user.end_date;
+      
+      if (hasActiveSubscription) {
+        // User has active subscription, unlock without deducting points
+        access.is_locked = false;
+        access.updated_at = new Date();
+        await access.save();
+        return res.json({ message: 'Unlocked using subscription', access });
+      } else if (user.current_reward_balance > 0) {
+        // User has points, deduct and unlock
         user.current_reward_balance -= 1;
         await user.save();
         access.is_locked = false;
@@ -326,9 +337,26 @@ router.post('/episode/access', async (req, res) => {
         return res.json({ message: 'Locked, not enough points', access });
       }
     } else {
-      // No record exists, check user points
+      // No record exists, check user subscription status
       const user = await User.findByPk(user_id);
-      if (user.current_reward_balance > 0) {
+      const currentTime = new Date();
+      const hasActiveSubscription = user.start_date && user.end_date && 
+        currentTime >= user.start_date && currentTime <= user.end_date;
+      
+      if (hasActiveSubscription) {
+        // User has active subscription, create unlocked record without deducting points
+        access = await EpisodeUserAccess.create({
+          id: uuidv4(),
+          episode_id,
+          series_id,
+          user_id,
+          is_locked: false,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+        return res.json({ message: 'Unlocked using subscription', access });
+      } else if (user.current_reward_balance > 0) {
+        // User has points, deduct and create unlocked record
         user.current_reward_balance -= 1;
         await user.save();
         access = await EpisodeUserAccess.create({
