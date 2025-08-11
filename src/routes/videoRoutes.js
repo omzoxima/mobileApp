@@ -182,7 +182,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
       }
 
       // Build the upstream URL and sign it using hdTsPath
-      const upstream = new URL(`https://${CDN_HOST}${subtitle.hdTsPath}`);
+      const upstream = new URL(`https://${CDN_HOST}/${subtitle.hdTsPath}`);
       const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
     
       
