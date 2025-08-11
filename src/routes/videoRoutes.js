@@ -25,7 +25,7 @@ const router = express.Router();
 const PLAYLIST_EXPIRY_SECONDS = parseInt(process.env.PLAYLIST_EXPIRY_SECONDS || '600'); // 10 minutes
 const SEGMENT_EXPIRY_SECONDS = parseInt(process.env.SEGMENT_EXPIRY_SECONDS || '6' * 3600); // 6 hours
 
-router.get('/episodes/:id/hls-cdn', async (req, res) => {
+router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
     const { id } = req.params;
     const { lang } = req.query;
@@ -96,7 +96,7 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
 
 
 
-router.get('/episodes/:id/hls-url', async (req, res) => {
+/*router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
     const { id } = req.params;
     const { lang } = req.query;
@@ -130,7 +130,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
     console.error('Error generating HD segment signed URL:', error);
     res.status(500).json({ error: error.message || 'Failed to generate signed URL' });
   }
-});
+});*/
 
 // GET /api/series (paginated, filter by category)
 router.get('/series', async (req, res) => {
