@@ -5,11 +5,12 @@ import { sequelize } from '../models/index.js';
 import userContext from '../middlewares/userContext.js';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
-import { getSignedUrl } from '../services/gcsStorage.js';
-
+import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
 
 const { Series, Episode, User, StaticContent, Wishlist, OTP } = models;
 const router = express.Router();
+
+
 
 
 // GET /api/wishlist/series-episodes?user_id=USER_ID
@@ -40,9 +41,9 @@ router.get('/wishlist/series-episodes', async (req, res) => {
         // Fetch the series with all fields
         const series = await Series.findByPk(record.series_id, { raw: true });
         if (series && series.status === 'Active') {
-          // Always generate signed URL for thumbnail_url
+          // Generate CDN signed URL for thumbnail_url
           if (series.thumbnail_url) {
-            series.thumbnail_url = await getSignedUrl(series.thumbnail_url, 60 * 24 * 7);
+            series.thumbnail_url = generateCdnSignedUrlForThumbnail(series.thumbnail_url);
           }
           // Fetch all episodes for the series
           const episodes = await Episode.findAll({
@@ -82,11 +83,11 @@ router.get('/search', async (req, res) => {
       include: [{ model: Episode }],
       limit: 10
     });
-    // Always generate signed URL for thumbnail_url in each series
+    // Generate CDN signed URL for thumbnail_url in each series
     const seriesWithSignedUrl = await Promise.all(seriesResults.map(async series => {
       let obj = series.toJSON ? series.toJSON() : series;
       if (obj.thumbnail_url) {
-        obj.thumbnail_url = await getSignedUrl(obj.thumbnail_url, 60 * 24 * 7);
+        obj.thumbnail_url = generateCdnSignedUrlForThumbnail(obj.thumbnail_url);
       }
       return obj;
     }));

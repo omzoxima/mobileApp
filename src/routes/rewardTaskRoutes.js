@@ -319,12 +319,12 @@ router.get('/user-transaction', async (req, res) => {
         attributes: ['id', 'title', 'thumbnail_url']
       });
     }
-    // Generate signed URLs for each unique series only once
-    const { getSignedUrl } = await import('../services/gcsStorage.js');
+    // Generate CDN signed URLs for each unique series only once
+    const { generateCdnSignedUrlForThumbnail } = await import('../services/cdnService.js');
     const seriesSignedUrlMap = {};
     for (const s of seriesList) {
       if (s.thumbnail_url) {
-        seriesSignedUrlMap[s.id] = await getSignedUrl(s.thumbnail_url, 60 * 24 * 7);
+        seriesSignedUrlMap[s.id] = generateCdnSignedUrlForThumbnail(s.thumbnail_url);
       } else {
         seriesSignedUrlMap[s.id] = null;
       }
