@@ -17,9 +17,10 @@ function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
   const KEY_B64URL = process.env.CDN_KEY_SECRET;
   const TTL_SECS = 60 * 24; // 1 day (24 hours)
+  const p = `/${thumbnailPath}`;
 
   if (!KEY_B64URL) {
-    return thumbnailPath; // Return original path if CDN not configured
+    return p; // Return original path if CDN not configured
   }
 
   // Base64url helpers
@@ -52,7 +53,7 @@ function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   }
 
   // Build the upstream URL and sign it
-  const upstream = new URL(`https://${CDN_HOST}${thumbnailPath}`);
+  const upstream = new URL(`https://${CDN_HOST}${p}`);
   const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
   return signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
 }
