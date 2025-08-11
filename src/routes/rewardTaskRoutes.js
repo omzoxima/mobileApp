@@ -2,8 +2,9 @@ import express from 'express';
 import models from '../models/index.js';
 import userContext from '../middlewares/userContext.js';
 import { Op } from 'sequelize';
+import { v4 as uuidv4 } from 'uuid';
 
-const { RewardTask, RewardTransaction, User} = models;
+const { RewardTask, RewardTransaction, User, AdReward, EpisodeUserAccess } = models;
 const router = express.Router();
 
 // Optimized /reward_task route
@@ -353,6 +354,102 @@ router.get('/user-transaction', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/task/ad-reward - Add ad reward points and grant episode access
+router.post('/ad-reward', async (req, res) => {
+  try {
+    const { series_id, episode_id, points } = req.body;
+    
+    // Validate required fields
+    if (!series_id || !episode_id || points === undefined) {
+      return res.status(400).json({ error: 'series_id, episode_id, and points are required' });
+    }
+
+    // Validate points is a number
+    if (typeof points !== 'number' || points <= 0) {
+      return res.status(400).json({ error: 'points must be a positive number' });
+    }
+
+    // Get user from JWT token or device-id header
+    let user = null;
+    const deviceId = req.headers['x-device-id'];
+    const authHeader = req.headers['authorization'];
+
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        const payload = jwt.verify(token, process.env.JWT_SECRET);
+        user = await User.findByPk(payload.userId);
+      } catch (err) {
+        return res.status(401).json({ error: 'Invalid JWT token' });
+      }
+    } else if (deviceId) {
+      user = await User.findOne({ where: { device_id: deviceId } });
+    }
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    // Create ad reward record
+    await AdReward.create({
+      user_id: user.id,
+      points: points,
+      series_id: series_id,
+      episode_id: episode_id,
+      created_at: new Date()
+    });
+
+    // Calculate total points for this user
+    const totalPoints = await AdReward.sum('points', {
+      where: { user_id: user.id }
+    });
+
+    // If total points >= 1, grant episode access and clear ad rewards
+    if (totalPoints >= 1.0) {
+      // Grant episode access
+      await EpisodeUserAccess.create({
+        id: uuidv4(),
+        episode_id: episode_id,
+        series_id: series_id,
+        user_id: user.id,
+        is_locked: false,
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      // Delete all ad reward records for this user
+      await AdReward.destroy({
+        where: { user_id: user.id }
+      });
+
+      return res.json({
+        success: true,
+        message: 'Episode access granted! Ad rewards cleared.',
+        totalPoints: totalPoints,
+        episodeAccess: {
+          episode_id,
+          series_id,
+          user_id: user.id,
+          is_locked: false
+        }
+      });
+    } else {
+      // Points not enough yet
+      return res.json({
+        success: true,
+        message: 'Ad reward points added',
+        currentPoints: totalPoints,
+        pointsNeeded: 1.0 - totalPoints,
+        episodeAccess: null
+      });
+    }
+
+  } catch (error) {
+    console.error('Ad reward error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process ad reward' });
   }
 });
 

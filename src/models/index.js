@@ -15,6 +15,7 @@ import EpisodeUserAccess from './episodeUserAccess.js';
 import Like from './like.js';
 import Share from './share.js';
 import OTP from './otp.js';
+import AdReward from './adReward.js';
 
 const sequelize = new Sequelize(
   config.DB_NAME,
@@ -50,7 +51,8 @@ const models = {
   EpisodeBundlePrice: EpisodeBundlePrice(sequelize),
   StaticContent: StaticContent(sequelize),
   EpisodeUserAccess: EpisodeUserAccess(sequelize),
-  OTP: OTP(sequelize)
+  OTP: OTP(sequelize),
+  AdReward: AdReward(sequelize)
 };
 
 models.Category.hasMany(models.Series, { foreignKey: 'category_id' });
