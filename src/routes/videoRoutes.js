@@ -30,7 +30,7 @@ router.get('/episodes/:id/hls-2', async (req, res) => {
     if (!subtitle || !subtitle.gcsPath) return res.status(404).json({ error: 'Playlist not found for this language' });
 
     // playlist path example: "hls_output/<uuid>/playlist.m3u8"
-    const cdnResourcePath = `/${subtitle.gcsPath}`;
+    const cdnResourcePath = `/${subtitle.hdTsPath}`;
 
     // Generate CDN signed URL for the playlist only
     // The playlist itself has relative .ts segment URLs that CDN fetches securely from private GCS origin
@@ -401,5 +401,298 @@ router.get('/episodes/:id/stream', async (req, res) => {
     res.status(500).json({ error: error.message || 'Failed to generate streaming credentials' });
   }
 });
+
+// HLS Signer Route - Based on server.js functionality
+router.get('/sign', (req, res) => {
+  try {
+    const p = req.query.path;
+    if (!p || typeof p !== 'string' || !p.startsWith('/')) {
+      return res.status(400).json({ error: 'missing or invalid ?path=...' });
+    }
+
+    // Configuration from environment variables
+    const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
+    const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
+    const KEY_B64URL = process.env.CDN_KEY_SECRET;
+    const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
+
+    // Console logging for debugging
+    console.log('🔑 HLS Signer Route - Configuration:');
+    console.log('   CDN_HOST:', CDN_HOST);
+    console.log('   KEY_NAME:', KEY_NAME);
+    console.log('   KEY_B64URL:', KEY_B64URL ? `${KEY_B64URL.substring(0, 10)}...` : 'NOT SET');
+    console.log('   TTL_SECS:', TTL_SECS);
+    console.log('   Requested Path:', p);
+    console.log('   Environment:', process.env.NODE_ENV || 'development');
+
+    if (!KEY_B64URL) {
+      console.error('❌ ERROR: KEY_B64URL environment variable not set');
+      return res.status(500).json({ error: 'KEY_B64URL environment variable not set' });
+    }
+
+    // Base64url helpers
+    function b64urlDecode(b64url) {
+      let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4 !== 0) b64 += '=';
+      return Buffer.from(b64, 'base64');
+    }
+
+    function b64urlEncode(buf) {
+      return Buffer.from(buf)
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+    }
+
+    const KEY_BYTES = b64urlDecode(KEY_B64URL);
+
+    // Sign a FULL URL
+    function signFullUrl(fullUrl, keyName, keyBytes, expiresEpoch) {
+      const sep = fullUrl.includes('?') ? '&' : '?';
+      const urlToSign = `${fullUrl}${sep}Expires=${expiresEpoch}&KeyName=${encodeURIComponent(keyName)}`;
+
+      const hmac = crypto.createHmac('sha1', keyBytes);
+      hmac.update(urlToSign, 'utf8');
+      const sig = b64urlEncode(hmac.digest());
+
+      return `${urlToSign}&Signature=${sig}`;
+    }
+
+    // Build the upstream URL and sign it
+    const upstream = new URL(`https://${CDN_HOST}${p}`);
+    const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
+    
+    console.log('🔐 Signing Process:');
+    console.log('   Upstream URL:', upstream.toString());
+    console.log('   Expires Timestamp:', expires);
+    console.log('   Expires Date:', new Date(expires * 1000).toISOString());
+    console.log('   Current Time:', new Date().toISOString());
+    console.log('   Time Until Expiry:', TTL_SECS, 'seconds');
+    
+    const signed = signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
+    
+    console.log('✅ Signed URL Generated:');
+    console.log('   Original Path:', p);
+    console.log('   CDN Host:', CDN_HOST);
+    console.log('   Key Name:', KEY_NAME);
+    console.log('   TTL Seconds:', TTL_SECS);
+    console.log('   Full Signed URL:', signed);
+    
+    // Parse the signed URL to show components
+    try {
+      const signedUrl = new URL(signed);
+      console.log('🔍 Signed URL Components:');
+      console.log('   Protocol:', signedUrl.protocol);
+      console.log('   Host:', signedUrl.host);
+      console.log('   Pathname:', signedUrl.pathname);
+      console.log('   Expires Param:', signedUrl.searchParams.get('Expires'));
+      console.log('   KeyName Param:', signedUrl.searchParams.get('KeyName'));
+      console.log('   Signature Param:', signedUrl.searchParams.get('Signature'));
+      console.log('   Signature Length:', signedUrl.searchParams.get('Signature')?.length || 0);
+    } catch (parseError) {
+      console.log('⚠️ Could not parse signed URL for component analysis');
+    }
+
+    return res.json({ 
+      url: signed, 
+      ttl: TTL_SECS,
+      originalPath: p,
+      cdnHost: CDN_HOST,
+      expiresAt: new Date(expires * 1000).toISOString()
+    });
+
+  } catch (e) {
+    console.error('Sign failure:', e);
+    return res.status(500).json({ error: 'sign failure', details: e.message });
+  }
+});
+
+// HLS Proxy Route - Rewrites manifests and redirects segments
+router.get('/hls/*', async (req, res) => {
+  try {
+    const pathAndQuery = req.originalUrl; // includes /hls/... plus query
+    const CDN_HOST = process.env.CDN_HOST || 'cdn.tuktuki.com';
+    const ORIGIN_SCHEME = process.env.ORIGIN_SCHEME || 'https';
+    
+    // Build the upstream URL
+    const upstream = new URL(`${ORIGIN_SCHEME}://${CDN_HOST}${pathAndQuery}`);
+
+    if (upstream.pathname.endsWith('.m3u8')) {
+      // For manifests, fetch and rewrite URIs
+      const response = await fetch(upstream.toString());
+      if (!response.ok) {
+        return res.status(response.status).send('Manifest not found');
+      }
+      
+      const text = await response.text();
+      const baseForRel = new URL(upstream.pathname, `https://${CDN_HOST}`).toString();
+      const rewritten = rewriteM3U8(text, baseForRel);
+
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'private, no-store');
+      return res.status(200).send(rewritten);
+    }
+
+    // For segments and other files, redirect to signed CDN URL
+    const signed = await generateSignedUrlForPath(pathAndQuery);
+    return res.redirect(302, signed);
+
+  } catch (e) {
+    console.error('HLS proxy error:', e);
+    return res.status(500).send('proxy error');
+  }
+});
+
+// Helper function to generate signed URL for a path
+async function generateSignedUrlForPath(path) {
+  const CDN_HOST = process.env.CDN_HOST || 'cdn.tuktuki.com';
+  const KEY_NAME = process.env.KEY_NAME || 'key1';
+  const KEY_B64URL = process.env.KEY_B64URL;
+  const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
+
+  if (!KEY_B64URL) {
+    throw new Error('KEY_B64URL environment variable not set');
+  }
+
+  function b64urlDecode(b64url) {
+    let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    return Buffer.from(b64, 'base64');
+  }
+
+  function b64urlEncode(buf) {
+    return Buffer.from(buf)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  const KEY_BYTES = b64urlDecode(KEY_B64URL);
+
+  function signFullUrl(fullUrl, keyName, keyBytes, expiresEpoch) {
+    const sep = fullUrl.includes('?') ? '&' : '?';
+    const urlToSign = `${fullUrl}${sep}Expires=${expiresEpoch}&KeyName=${encodeURIComponent(keyName)}`;
+
+    const hmac = crypto.createHmac('sha1', keyBytes);
+    hmac.update(urlToSign, 'utf8');
+    const sig = b64urlEncode(hmac.digest());
+
+    return `${urlToSign}&Signature=${sig}`;
+  }
+
+  const upstream = new URL(`https://${CDN_HOST}${path}`);
+  const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
+  return signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
+}
+
+// Helper function to rewrite M3U8 manifests
+function rewriteM3U8(manifestText, baseUrl) {
+  const lines = manifestText.split(/\r?\n/);
+  const out = [];
+
+  // Helper: append/merge query params safely
+  const appendParams = (urlStr, paramsStr) => {
+    if (!paramsStr) return urlStr;
+    const url = new URL(urlStr);
+    // paramsStr is like "Expires=...&KeyName=...&Signature=..."
+    for (const pair of paramsStr.split('&')) {
+      const [k, v] = pair.split('=');
+      url.searchParams.set(k, v);
+    }
+    return url.toString();
+  };
+
+  // Replace URI="...": we'll sign the resolved absolute URL
+  const rewriteAttrUris = (line) =>
+    line.replace(/URI="([^"]+)"/g, (m, uriVal) => {
+      const abs = resolveAgainst(baseUrl, uriVal);
+      const signed = signForCdn(abs);
+      return `URI="${signed}"`;
+    });
+
+  // Lines that are pure URIs (segments or sub-playlists)
+  const isPureUriLine = (s) => s && !s.startsWith('#');
+
+  for (let i = 0; i < lines.length; i++) {
+    let L = lines[i];
+
+    if (L.startsWith('#')) {
+      // rewrite attribute URIs inside tags
+      L = rewriteAttrUris(L);
+      out.push(L);
+      continue;
+    }
+
+    if (isPureUriLine(L)) {
+      const abs = resolveAgainst(baseUrl, L.trim());
+      const signed = signForCdn(abs);
+      out.push(signed);
+    } else {
+      out.push(L);
+    }
+  }
+  
+  return out.join('\n');
+}
+
+// Resolve possibly-relative HLS URI against a base playlist URL
+function resolveAgainst(base, maybeUri) {
+  try {
+    // Absolute URL
+    return new URL(maybeUri).toString();
+  } catch {
+    // Relative -> resolve
+    return new URL(maybeUri, base).toString();
+  }
+}
+
+// Sign for CDN
+function signForCdn(targetUrl) {
+  const u = new URL(targetUrl);
+  const CDN_HOST = process.env.CDN_HOST || 'cdn.tuktuki.com';
+  const KEY_NAME = process.env.KEY_NAME || 'key1';
+  const KEY_B64URL = process.env.KEY_B64URL;
+  const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
+
+  if (!KEY_B64URL) {
+    throw new Error('KEY_B64URL environment variable not set');
+  }
+
+  function b64urlDecode(b64url) {
+    let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    return Buffer.from(b64, 'base64');
+  }
+
+  function b64urlEncode(buf) {
+    return Buffer.from(buf)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  const KEY_BYTES = b64urlDecode(KEY_B64URL);
+
+  function signFullUrl(fullUrl, keyName, keyBytes, expiresEpoch) {
+    const sep = fullUrl.includes('?') ? '&' : '?';
+    const urlToSign = `${fullUrl}${sep}Expires=${expiresEpoch}&KeyName=${encodeURIComponent(keyName)}`;
+
+    const hmac = crypto.createHmac('sha1', keyBytes);
+    hmac.update(urlToSign, 'utf8');
+    const sig = b64urlEncode(hmac.digest());
+
+    return `${urlToSign}&Signature=${sig}`;
+  }
+
+  // IMPORTANT: Do NOT include port in host for signing; use https://<host>
+  u.protocol = 'https:';
+  u.host = CDN_HOST; // force to CDN host
+
+  const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
+  return signFullUrl(u.toString(), KEY_NAME, KEY_BYTES, expires);
+}
 
 export default router;
