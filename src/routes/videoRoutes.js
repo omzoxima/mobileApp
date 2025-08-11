@@ -6,6 +6,7 @@ import { getSignedUrl, getFileContents, downloadFromGCS, uploadTextToGCS } from 
 import cdnAuthService from '../services/cdnAuthService.js';
 import path from 'path';
 import { Storage } from '@google-cloud/storage';
+import crypto from 'crypto';
 
 
 
@@ -260,6 +261,116 @@ router.get('/test-ffmpeg', (req, res) => {
       aac: formats.aac ? 'Available' : 'Missing'
     });
   });
+});
+
+// Cloud CDN signed URL and cookie generation route
+router.get('/episodes/:id/stream', async (req, res) => {
+  try {
+    // Security: Ensure HTTPS in production
+    if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+      return res.status(403).json({ 
+        error: 'HTTPS required for secure video streaming',
+        message: 'This endpoint requires HTTPS connection'
+      });
+    }
+
+    const { id } = req.params;
+    const { lang } = req.query;
+    
+    if (!lang) {
+      return res.status(400).json({ error: 'Language code (lang) is required' });
+    }
+
+    // Get episode and subtitle info
+    const episode = await models.Episode.findByPk(id);
+    if (!episode) {
+      return res.status(404).json({ error: 'Episode not found' });
+    }
+
+    if (!Array.isArray(episode.subtitles)) {
+      return res.status(404).json({ error: 'No HLS info found for this episode' });
+    }
+
+    const subtitle = episode.subtitles.find(s => s.language === lang);
+    if (!subtitle || !subtitle.gcsPath) {
+      return res.status(404).json({ error: 'Playlist not found for this language' });
+    }
+
+    // Configuration from environment variables
+    const CDN_DOMAIN = process.env.CDN_DOMAIN || 'https://cdn.tuktuki.com';
+    const KEY_NAME = process.env.CDN_KEY_NAME || 'media-key-1';
+    const SECRET_KEY = process.env.CDN_KEY_SECRET || 'YOUR_BASE64URL_ENCODED_SECRET_KEY';
+
+    // Decode the key from base64
+    const keyBytes = Buffer.from(SECRET_KEY.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+
+    // Helper function to generate signed URL
+    function generateSignedUrl(urlPath) {
+      const expirationTimestamp = Math.floor(Date.now() / 1000) + 300; // 5 minutes validity
+      const stringToSign = `${urlPath}?Expires=${expirationTimestamp}&KeyName=${KEY_NAME}`;
+      const hmac = crypto.createHmac('sha1', keyBytes);
+      hmac.update(stringToSign);
+      const signature = hmac.digest('base64url');
+      return `${CDN_DOMAIN}${stringToSign}&Signature=${signature}`;
+    }
+
+    // Helper function to generate signed cookie value
+    function generateSignedCookieValue(urlPrefix) {
+      const expirationTimestamp = Math.floor(Date.now() / 1000) + 10800; // 3 hours validity
+      const encodedPrefix = Buffer.from(urlPrefix).toString('base64url');
+      const policy = `URLPrefix=${encodedPrefix}:Expires=${expirationTimestamp}:KeyName=${KEY_NAME}`;
+      const hmac = crypto.createHmac('sha1', keyBytes);
+      hmac.update(policy);
+      const signature = hmac.digest('base64url');
+      return `${policy}:Signature=${signature}`;
+    }
+
+    // The path where your video files are stored in the GCS bucket
+    const gcsVideoPath = `/${path.dirname(subtitle.gcsPath)}`;
+
+    // 1. Generate the signed URL for the master playlist
+    const manifestUrl = generateSignedUrl(`${gcsVideoPath}/playlist.m3u8`);
+    
+    // 2. Generate the signed cookie for the TS segments
+    const cookieUrlPrefix = `${CDN_DOMAIN}${gcsVideoPath}/`;
+    const cookieValue = generateSignedCookieValue(cookieUrlPrefix);
+    
+    // 3. Set the cookie in the HTTP response
+    // The cookie name 'gcdn-auth' is required by Google Cloud CDN
+    res.cookie('gcdn-auth', cookieValue, {
+      httpOnly: true, // Prevents client-side script from accessing the cookie
+      secure: true,   // Ensures the cookie is sent only over HTTPS
+      sameSite: 'strict', // Provides protection against CSRF
+      domain: '.tuktuki.com', // Allow subdomain access (cdn.tuktuki.com)
+      path: '/', // Cookie available across the entire domain
+      maxAge: 10800000 // 3 hours in milliseconds
+    });
+
+    // 4. Set security headers
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+
+    // 5. Send the signed manifest URL to the client
+    res.status(200).json({ 
+      manifestUrl,
+      message: 'Streaming credentials generated successfully',
+      episodeId: id,
+      language: lang,
+      security: {
+        https: true,
+        cookieSecure: true,
+        cookieHttpOnly: true,
+        cookieSameSite: 'strict'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error generating streaming credentials:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate streaming credentials' });
+  }
 });
 
 export default router;
