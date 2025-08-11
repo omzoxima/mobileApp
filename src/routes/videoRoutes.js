@@ -3,16 +3,19 @@ import models from '../models/index.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { getSignedUrl, getFileContents, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
-import cdnAuthService from '../services/cdnAuthService.js';
+import { generateCdnSignedUrl } from '../services/cdnAuthService.js';
 import path from 'path';
 import { Storage } from '@google-cloud/storage';
 
 
 
 
-
 const { Series, Episode, Category,EpisodeBundlePrice } = models;
 const router = express.Router();
+
+
+
+
 
 
 
@@ -77,7 +80,7 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
           if (isSegment(vline)) {
             const segName = vline.trim(); // e.g. hd0000000000.ts
             const segResourcePath = `/${path.posix.join(folder, segName)}`;
-                         return cdnAuthService.generateCdnSignedUrl(segResourcePath, SEGMENT_EXPIRY_SECONDS);
+            return generateCdnSignedUrl(segResourcePath, SEGMENT_EXPIRY_SECONDS);
           }
           return vline;
         }).join('\n');
@@ -126,7 +129,8 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
         // For clarity in this PR I'll implement the upload-to-GCS approach.
         // Upload the updatedVariantText to GCS under _signed/<variantName>
         const signedVariantGcsPath = path.posix.join(folder, '_signed', `${Date.now()}-${variantName}`);
-                 // call a helper to upload (we'll use imported Storage)
+        // call a helper to upload (we'll require storage here)
+       // const { Storage } = require('@google-cloud/storage');
         const storage = new Storage();
         const bucket = storage.bucket(process.env.GCS_BUCKET_NAME);
         await bucket.file(signedVariantGcsPath).save(updatedVariantText, {
@@ -135,7 +139,7 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
         });
 
         // Now sign the variant path (the uploaded one)
-                 const signedVariantUrl = cdnAuthService.generateCdnSignedUrl(`/${signedVariantGcsPath}`, PLAYLIST_EXPIRY_SECONDS);
+        const signedVariantUrl = generateCdnSignedUrl(`/${signedVariantGcsPath}`, PLAYLIST_EXPIRY_SECONDS);
         variantNameToSignedUrl[variantName] = signedVariantUrl;
 
         // replace the variant filename in masterLines with signedVariantUrl
@@ -156,6 +160,9 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });
+
+
+
 
 router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
