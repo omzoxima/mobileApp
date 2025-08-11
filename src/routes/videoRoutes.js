@@ -14,6 +14,35 @@ import crypto from 'crypto';
 const { Series, Episode, Category,EpisodeBundlePrice } = models;
 const router = express.Router();
 
+router.get('/episodes/:id/hls-url', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lang } = req.query;
+
+    if (!lang) return res.status(400).json({ error: 'Language code (lang) is required' });
+
+    const episode = await models.Episode.findByPk(id);
+    if (!episode) return res.status(404).json({ error: 'Episode not found' });
+
+    if (!Array.isArray(episode.subtitles)) return res.status(404).json({ error: 'No HLS info found for this episode' });
+
+    const subtitle = episode.subtitles.find(s => s.language === lang);
+    if (!subtitle || !subtitle.gcsPath) return res.status(404).json({ error: 'Playlist not found for this language' });
+
+    // playlist path example: "hls_output/<uuid>/playlist.m3u8"
+    const cdnResourcePath = `/${subtitle.gcsPath}`;
+
+    // Generate CDN signed URL for the playlist only
+    // The playlist itself has relative .ts segment URLs that CDN fetches securely from private GCS origin
+    const signedCdnUrl = cdnAuthService.generateCdnSignedUrl(cdnResourcePath, 3600);
+
+    return res.json({ signedUrl: signedCdnUrl });
+
+  } catch (err) {
+    console.error('HLS CDN route error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
+});
 
 
 
@@ -25,7 +54,7 @@ const router = express.Router();
 const PLAYLIST_EXPIRY_SECONDS = parseInt(process.env.PLAYLIST_EXPIRY_SECONDS || '600'); // 10 minutes
 const SEGMENT_EXPIRY_SECONDS = parseInt(process.env.SEGMENT_EXPIRY_SECONDS || '6' * 3600); // 6 hours
 
-router.get('/episodes/:id/hls-url', async (req, res) => {
+/*router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
     const { id } = req.params;
     const { lang } = req.query;
@@ -91,7 +120,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
-});
+});*/
 
 
 
@@ -308,7 +337,7 @@ router.get('/episodes/:id/stream', async (req, res) => {
     function generateSignedUrl(urlPath) {
       const expirationTimestamp = Math.floor(Date.now() / 1000) + 300; // 5 minutes validity
       const stringToSign = `${urlPath}?Expires=${expirationTimestamp}&KeyName=${KEY_NAME}`;
-      const hmac = crypto.createHmac('sha1', keyBytes);
+      const hmac = crypto.createHmac('sha256', keyBytes);
       hmac.update(stringToSign);
       const signature = hmac.digest('base64url');
       return `${CDN_DOMAIN}${stringToSign}&Signature=${signature}`;
@@ -319,7 +348,7 @@ router.get('/episodes/:id/stream', async (req, res) => {
       const expirationTimestamp = Math.floor(Date.now() / 1000) + 10800; // 3 hours validity
       const encodedPrefix = Buffer.from(urlPrefix).toString('base64url');
       const policy = `URLPrefix=${encodedPrefix}:Expires=${expirationTimestamp}:KeyName=${KEY_NAME}`;
-      const hmac = crypto.createHmac('sha1', keyBytes);
+      const hmac = crypto.createHmac('sha256', keyBytes);
       hmac.update(policy);
       const signature = hmac.digest('base64url');
       return `${policy}:Signature=${signature}`;
