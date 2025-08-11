@@ -24,6 +24,11 @@ export async function getSignedUrl(gcsPath, expiryMinutes = 60) {
     throw new Error('Failed to generate signed URL');
   }
 }
+export async function getFileContents(bucketName, filePath) {
+  const file = storage.bucket(bucketName).file(filePath);
+  const [contents] = await file.download();
+  return contents.toString('utf8');
+}
 export async function listSegmentFiles(gcsFolder) {
   const [files] = await storage.bucket(bucketName).getFiles({ prefix: gcsFolder });
   return files.filter(f => f.name.endsWith('.ts')).map(f => f.name);
