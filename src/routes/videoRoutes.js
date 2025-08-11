@@ -140,9 +140,9 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
     let signedUrl = null;
     if (subtitle.hdTsPath) {
       // Configuration from environment variables
-      const CDN_HOST = process.env.CDN_HOST || 'cdn.tuktuki.com';
-      const KEY_NAME = process.env.KEY_NAME || 'key1';
-      const KEY_B64URL = process.env.KEY_B64URL;
+      const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
+      const KEY_NAME = process.env.CDN_KEY_SECRET || 'key1';
+      const KEY_B64URL = process.env.CDN_KEY_SECRET;
       const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
 
      
