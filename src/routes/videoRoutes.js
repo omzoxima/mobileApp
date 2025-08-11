@@ -14,7 +14,7 @@ import crypto from 'crypto';
 const { Series, Episode, Category,EpisodeBundlePrice } = models;
 const router = express.Router();
 
-router.get('/episodes/:id/hls-url', async (req, res) => {
+router.get('/episodes/:id/hls-2', async (req, res) => {
   try {
     const { id } = req.params;
     const { lang } = req.query;
@@ -54,7 +54,7 @@ router.get('/episodes/:id/hls-url', async (req, res) => {
 const PLAYLIST_EXPIRY_SECONDS = parseInt(process.env.PLAYLIST_EXPIRY_SECONDS || '600'); // 10 minutes
 const SEGMENT_EXPIRY_SECONDS = parseInt(process.env.SEGMENT_EXPIRY_SECONDS || '6' * 3600); // 6 hours
 
-/*router.get('/episodes/:id/hls-url', async (req, res) => {
+router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
     const { id } = req.params;
     const { lang } = req.query;
@@ -120,7 +120,7 @@ const SEGMENT_EXPIRY_SECONDS = parseInt(process.env.SEGMENT_EXPIRY_SECONDS || '6
     console.error(err);
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
-});*/
+});
 
 
 
