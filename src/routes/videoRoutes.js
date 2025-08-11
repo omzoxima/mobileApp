@@ -2,7 +2,11 @@ import express from 'express';
 import models from '../models/index.js';
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
-import{getSignedUrl,listSegmentFiles,downloadFromGCS,uploadTextToGCS} from '../services/gcsStorage.js'
+import { getSignedUrl, listSegmentFiles, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
+import cdnAuthService from '../services/cdnAuthService.js';
+import path from 'path';
+import fs from 'fs';
+
 
 
 
@@ -27,6 +31,54 @@ function isSignedUrlExpired(url) {
     return true;
   }
 }
+router.get('/episodes/:id/hls-cdn', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lang } = req.query;
+
+    if (!lang) {
+      return res.status(400).json({ error: 'Language code (lang) is required' });
+    }
+
+    const episode = await models.Episode.findByPk(id);
+    if (!episode) {
+      return res.status(404).json({ error: 'Episode not found' });
+    }
+
+    if (!Array.isArray(episode.subtitles)) {
+      return res.status(404).json({ error: 'No subtitles/HLS info found for this episode.' });
+    }
+
+    const subtitle = episode.subtitles.find(s => s.language === lang);
+    if (!subtitle || !subtitle.gcsPath) {
+      return res.status(404).json({ error: 'No HLS playlist found for this language.' });
+    }
+
+    // Load the original playlist from storage (you may need to fetch from GCS if not local)
+    const playlistPath = path.join('/mnt/data/hls', subtitle.gcsPath); // Change path according to your setup
+    if (!fs.existsSync(playlistPath)) {
+      return res.status(404).json({ error: 'Playlist file not found' });
+    }
+
+    let playlistContent = fs.readFileSync(playlistPath, 'utf8');
+
+    // Replace .ts segment paths with signed CDN URLs
+    playlistContent = playlistContent.split('\n').map(line => {
+      if (line.endsWith('.ts')) {
+        return cdnAuthService.generateCdnSignedUrl(`/${path.dirname(subtitle.gcsPath)}/${line}`, 3600);
+      }
+      return line;
+    }).join('\n');
+
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.send(playlistContent);
+
+  } catch (error) {
+    console.error('Error generating signed CDN playlist:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate signed playlist' });
+  }
+});
+
 router.get('/episodes/:id/hls-url', async (req, res) => {
   try {
     const { id } = req.params;
