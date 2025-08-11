@@ -5,6 +5,7 @@ import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
 import { getSignedUrl, getFileContents, downloadFromGCS, uploadTextToGCS } from '../services/gcsStorage.js';
 import cdnAuthService from '../services/cdnAuthService.js';
 import path from 'path';
+import { Storage } from '@google-cloud/storage';
 
 
 
@@ -125,8 +126,7 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
         // For clarity in this PR I'll implement the upload-to-GCS approach.
         // Upload the updatedVariantText to GCS under _signed/<variantName>
         const signedVariantGcsPath = path.posix.join(folder, '_signed', `${Date.now()}-${variantName}`);
-        // call a helper to upload (we'll require storage here)
-        const { Storage } = require('@google-cloud/storage');
+                 // call a helper to upload (we'll use imported Storage)
         const storage = new Storage();
         const bucket = storage.bucket(process.env.GCS_BUCKET_NAME);
         await bucket.file(signedVariantGcsPath).save(updatedVariantText, {
