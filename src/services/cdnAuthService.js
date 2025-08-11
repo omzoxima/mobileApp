@@ -1,41 +1,39 @@
 // services/cdnAuthService.js
 import crypto from 'crypto';
 
-const CDN_KEY_NAME = process.env.CDN_KEY_NAME; // e.g. "my-key"
-const CDN_KEY_SECRET = process.env.CDN_KEY_SECRET; // Base64 encoded secret key
-const CDN_DOMAIN = process.env.CDN_DOMAIN; // e.g. "https://cdn.example.com"
+const CDN_KEY_NAME = process.env.CDN_KEY_NAME;         // e.g. "my-key"
+const CDN_KEY_SECRET_B64 = process.env.CDN_KEY_SECRET; // base64 secret provided by GCP
+const CDN_DOMAIN = process.env.CDN_DOMAIN;             // e.g. "https://cdn.example.com"
 
-// Expiry in seconds
-function getExpiryTime(secondsFromNow = 3600) {
-  return Math.floor(Date.now() / 1000) + secondsFromNow;
+if (!CDN_KEY_NAME || !CDN_KEY_SECRET_B64 || !CDN_DOMAIN) {
+  throw new Error('CDN_KEY_NAME, CDN_KEY_SECRET_B64 and CDN_DOMAIN must be set in env.');
+}
+
+const CDN_KEY_SECRET = Buffer.from(CDN_KEY_SECRET_B64, 'base64');
+
+function urlSafeBase64(buffer) {
+  return buffer.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
- * Generates a signed CDN URL for Google Cloud CDN
- * @param {string} path - Path starting with "/" (relative to CDN domain)
- * @param {number} expiresInSeconds - Expiry time in seconds
- * @returns {string} Signed URL
+ * Generate signed URL for Cloud CDN for a resource path (path must start with '/')
+ * @param {string} resourcePath  e.g. "/hls_output/.../hd0000000000.ts"
+ * @param {number} expiresInSec seconds until expiry
+ * @returns {string} full signed URL
  */
-function generateCdnSignedUrl(path, expiresInSeconds = 3600) {
-  if (!CDN_KEY_NAME || !CDN_KEY_SECRET || !CDN_DOMAIN) {
-    throw new Error("CDN_KEY_NAME, CDN_KEY_SECRET, and CDN_DOMAIN must be set in environment variables");
-  }
+function generateCdnSignedUrl(resourcePath, expiresInSec = 3600) {
+  if (!resourcePath.startsWith('/')) resourcePath = `/${resourcePath}`;
 
-  const expiration = getExpiryTime(expiresInSeconds);
-  const decodedKey = Buffer.from(CDN_KEY_SECRET, 'base64');
+  const expiry = Math.floor(Date.now() / 1000) + expiresInSec;
 
-  // URL signature format: URLSignature = base64(hmac-sha1(url-path + expiration, key))
-  const toSign = `${path}${expiration}`;
-  const signature = crypto
-    .createHmac('sha1', decodedKey)
-    .update(toSign)
-    .digest('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_');
+  // String to sign: resourcePath + "?Expires=" + expiry + "&KeyName=" + keyName
+  const signedValue = `${resourcePath}?Expires=${expiry}&KeyName=${CDN_KEY_NAME}`;
 
-  return `${CDN_DOMAIN}${path}?Expires=${expiration}&KeyName=${CDN_KEY_NAME}&Signature=${signature}`;
+  const hmac = crypto.createHmac('sha1', CDN_KEY_SECRET).update(signedValue).digest();
+  const signature = urlSafeBase64(hmac);
+
+  return `${CDN_DOMAIN}${signedValue}&Signature=${signature}`;
 }
-
 export default {
   generateCdnSignedUrl
 };
