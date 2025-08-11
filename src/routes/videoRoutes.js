@@ -115,110 +115,7 @@ router.get('/episode-bundles', async (req, res) => {
 });
 
 // HLS Signer Route - Based on server.js functionality
-router.get('/sign', (req, res) => {
-  try {
-    const p = req.query.path;
-    if (!p || typeof p !== 'string' || !p.startsWith('/')) {
-      return res.status(400).json({ error: 'missing or invalid ?path=...' });
-    }
 
-    // Configuration from environment variables
-    const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
-    const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
-    const KEY_B64URL = process.env.CDN_KEY_SECRET;
-    const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
-
-    // Console logging for debugging
-    console.log('🔑 HLS Signer Route - Configuration:');
-    console.log('   CDN_HOST:', CDN_HOST);
-    console.log('   KEY_NAME:', KEY_NAME);
-    console.log('   KEY_B64URL:', KEY_B64URL ? `${KEY_B64URL.substring(0, 10)}...` : 'NOT SET');
-    console.log('   TTL_SECS:', TTL_SECS);
-    console.log('   Requested Path:', p);
-    console.log('   Environment:', process.env.NODE_ENV || 'development');
-
-    if (!KEY_B64URL) {
-      console.error('❌ ERROR: KEY_B64URL environment variable not set');
-      return res.status(500).json({ error: 'KEY_B64URL environment variable not set' });
-    }
-
-    // Base64url helpers
-    function b64urlDecode(b64url) {
-      let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
-      while (b64.length % 4 !== 0) b64 += '=';
-      return Buffer.from(b64, 'base64');
-    }
-
-    function b64urlEncode(buf) {
-      return Buffer.from(buf)
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '');
-    }
-
-    const KEY_BYTES = b64urlDecode(KEY_B64URL);
-
-    // Sign a FULL URL
-    function signFullUrl(fullUrl, keyName, keyBytes, expiresEpoch) {
-      const sep = fullUrl.includes('?') ? '&' : '?';
-      const urlToSign = `${fullUrl}${sep}Expires=${expiresEpoch}&KeyName=${encodeURIComponent(keyName)}`;
-
-      const hmac = crypto.createHmac('sha1', keyBytes);
-      hmac.update(urlToSign, 'utf8');
-      const sig = b64urlEncode(hmac.digest());
-
-      return `${urlToSign}&Signature=${sig}`;
-    }
-
-    // Build the upstream URL and sign it
-    const upstream = new URL(`https://${CDN_HOST}${p}`);
-    const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
-    
-    console.log('🔐 Signing Process:');
-    console.log('   Upstream URL:', upstream.toString());
-    console.log('   Expires Timestamp:', expires);
-    console.log('   Expires Date:', new Date(expires * 1000).toISOString());
-    console.log('   Current Time:', new Date().toISOString());
-    console.log('   Time Until Expiry:', TTL_SECS, 'seconds');
-    
-    const signed = signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
-    
-    console.log('✅ Signed URL Generated:');
-    console.log('   Original Path:', p);
-    console.log('   CDN Host:', CDN_HOST);
-    console.log('   Key Name:', KEY_NAME);
-    console.log('   TTL Seconds:', TTL_SECS);
-    console.log('   Full Signed URL:', signed);
-    
-    // Parse the signed URL to show components
-    try {
-      const signedUrl = new URL(signed);
-      console.log('🔍 Signed URL Components:');
-      console.log('   Protocol:', signedUrl.protocol);
-      console.log('   Host:', signedUrl.host);
-      console.log('   Pathname:', signedUrl.pathname);
-      console.log('   Expires Param:', signedUrl.searchParams.get('Expires'));
-      console.log('   KeyName Param:', signedUrl.searchParams.get('KeyName'));
-      console.log('   Signature Param:', signedUrl.searchParams.get('Signature'));
-      console.log('   Signature Length:', signedUrl.searchParams.get('Signature')?.length || 0);
-    } catch (parseError) {
-      console.log('⚠️ Could not parse signed URL for component analysis');
-    }
-
-    return res.json({ 
-      url: signed, 
-      ttl: TTL_SECS,
-      originalPath: p,
-      cdnHost: CDN_HOST,
-      expiresAt: new Date(expires * 1000).toISOString()
-    });
-
-  } catch (e) {
-    console.error('Sign failure:', e);
-    return res.status(500).json({ error: 'sign failure', details: e.message });
-  }
-});
 router.get('/episodes/:Id/hls-url', async (req, res) => {
   try {
     const { Id } = req.params;
@@ -256,14 +153,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     const KEY_B64URL = process.env.CDN_KEY_SECRET;
     const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
 
-    // Console logging for debugging
-    console.log('🔑 HLS Signer Route - Configuration:');
-    console.log('   CDN_HOST:', CDN_HOST);
-    console.log('   KEY_NAME:', KEY_NAME);
-    console.log('   KEY_B64URL:', KEY_B64URL ? `${KEY_B64URL.substring(0, 10)}...` : 'NOT SET');
-    console.log('   TTL_SECS:', TTL_SECS);
-    console.log('   Requested Path:', p);
-    console.log('   Environment:', process.env.NODE_ENV || 'development');
+   
 
     if (!KEY_B64URL) {
       console.error('❌ ERROR: KEY_B64URL environment variable not set');
@@ -302,40 +192,21 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     // Build the upstream URL and sign it
     const upstream = new URL(`https://${CDN_HOST}${p}`);
     const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
-    
-    console.log('🔐 Signing Process:');
-    console.log('   Upstream URL:', upstream.toString());
-    console.log('   Expires Timestamp:', expires);
-    console.log('   Expires Date:', new Date(expires * 1000).toISOString());
-    console.log('   Current Time:', new Date().toISOString());
-    console.log('   Time Until Expiry:', TTL_SECS, 'seconds');
+   
     
     const signed = signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
-    
-    console.log('✅ Signed URL Generated:');
-    console.log('   Original Path:', p);
-    console.log('   CDN Host:', CDN_HOST);
-    console.log('   Key Name:', KEY_NAME);
-    console.log('   TTL Seconds:', TTL_SECS);
-    console.log('   Full Signed URL:', signed);
+  
     
     // Parse the signed URL to show components
     try {
       const signedUrl = new URL(signed);
-      console.log('🔍 Signed URL Components:');
-      console.log('   Protocol:', signedUrl.protocol);
-      console.log('   Host:', signedUrl.host);
-      console.log('   Pathname:', signedUrl.pathname);
-      console.log('   Expires Param:', signedUrl.searchParams.get('Expires'));
-      console.log('   KeyName Param:', signedUrl.searchParams.get('KeyName'));
-      console.log('   Signature Param:', signedUrl.searchParams.get('Signature'));
-      console.log('   Signature Length:', signedUrl.searchParams.get('Signature')?.length || 0);
+     
     } catch (parseError) {
       console.log('⚠️ Could not parse signed URL for component analysis');
     }
 
     return res.json({ 
-      url: signed, 
+      signedUrl: signed, 
       ttl: TTL_SECS,
       originalPath: p,
       cdnHost: CDN_HOST,
