@@ -35,8 +35,9 @@ router.get('/episodes/:id/hls-cdn', async (req, res) => {
     const subtitle = episode.subtitles?.find(s => s.language === lang);
     if (!subtitle?.gcsPath) return res.status(404).json({ error: 'Playlist not found' });
 
-    const bucketName = process.env.GCS_BUCKET_NAME;
-    const bucket = Storage.bucket(bucketName);
+         const bucketName = process.env.GCS_BUCKET_NAME;
+     const storage = new Storage();
+     const bucket = storage.bucket(bucketName);
 
     // 1. Read master playlist
     const [masterData] = await bucket.file(subtitle.gcsPath).download();
