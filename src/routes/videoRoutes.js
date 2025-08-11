@@ -251,7 +251,7 @@ router.get('/segment-signed-url', async (req, res) => {
 
 
 // Add this test endpoint
-router.get('/test-ffmpeg', (req, res) => {
+/*router.get('/test-ffmpeg', (req, res) => {
   ffmpeg().getAvailableFormats((err, formats) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json({
@@ -261,7 +261,7 @@ router.get('/test-ffmpeg', (req, res) => {
       aac: formats.aac ? 'Available' : 'Missing'
     });
   });
-});
+});*/
 
 // Cloud CDN signed URL and cookie generation route
 router.get('/episodes/:id/stream', async (req, res) => {
