@@ -29,7 +29,7 @@ function generateCdnSignedUrl(resourcePath, expiresInSec = 3600) {
   // String to sign: resourcePath + "?Expires=" + expiry + "&KeyName=" + keyName
   const signedValue = `${resourcePath}?Expires=${expiry}&KeyName=${CDN_KEY_NAME}`;
 
-  const hmac = crypto.createHmac('sha1', CDN_KEY_SECRET).update(signedValue).digest();
+  const hmac = crypto.createHmac('sha256', CDN_KEY_SECRET).update(signedValue).digest();
   const signature = urlSafeBase64(hmac);
 
   return `${CDN_DOMAIN}${signedValue}&Signature=${signature}`;
