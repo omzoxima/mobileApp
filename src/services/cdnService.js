@@ -1,10 +1,6 @@
 import crypto from 'crypto';
 
-/**
- * Common method to generate CDN signed URL for thumbnails
- * @param {string} thumbnailPath - The thumbnail path (e.g., "images/series/123/thumbnail.jpg")
- * @returns {string} - Signed CDN URL or original path if CDN not configured
- */
+
 export function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
   const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
@@ -51,6 +47,64 @@ export function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   return signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
 }
 
+
+
+
+/**
+ * Generate CDN signed cookie for a given path or folder
+ * @param {string} resourcePath - The path or folder prefix (e.g., "/hls_output/abc123/")
+ * @returns {Object} - { cookieName, cookieValue, expiresAt }
+ */
+export function generateCdnSignedCookie(resourcePath) {
+  const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
+  const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
+  const KEY_B64URL = process.env.CDN_KEY_SECRET;
+  const TTL_SECS = 60 * 24; // 1 day (in seconds)
+
+  if (!KEY_B64URL) {
+    throw new Error('CDN_KEY_SECRET not set');
+  }
+
+  // Ensure path starts with "/"
+  let pathPrefix = resourcePath.startsWith('/') ? resourcePath : `/${resourcePath}`;
+
+  // Helpers
+  function b64urlDecode(b64url) {
+    let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    return Buffer.from(b64, 'base64');
+  }
+  function b64urlEncode(buf) {
+    return Buffer.from(buf)
+      .toString('base64')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=+$/g, '');
+  }
+
+  const KEY_BYTES = b64urlDecode(KEY_B64URL);
+
+  // Signed Cookie Generator
+  function generateSignedCookie(urlPrefix, keyName, keyBytes, expiresEpoch) {
+    const stringToSign = `${urlPrefix}?Expires=${expiresEpoch}&KeyName=${keyName}`;
+    const sig = crypto.createHmac('sha1', keyBytes)
+      .update(stringToSign, 'utf8')
+      .digest();
+    const encodedSig = b64urlEncode(sig);
+    return `Expires=${expiresEpoch}&KeyName=${keyName}&Signature=${encodedSig}`;
+  }
+
+  const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
+  const urlPrefix = `https://${CDN_HOST}${pathPrefix}`;
+  const cookieValue = generateSignedCookie(urlPrefix, KEY_NAME, KEY_BYTES, expires);
+
+  return {
+    cookieName: 'Cloud-CDN-Cookie',
+    cookieValue,
+    expiresAt: new Date(expires * 1000).toISOString()
+  };
+}
+
 export default {
-  generateCdnSignedUrlForThumbnail
+  generateCdnSignedCookie,generateCdnSignedUrlForThumbnail
 };
