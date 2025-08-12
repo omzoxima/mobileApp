@@ -45,11 +45,19 @@ router.get('/series', async (req, res) => {
     // Process all series in parallel for speed
     const seriesWithPoster = await Promise.all(rows.map(async series => {
       let thumbnail_url = series.thumbnail_url;
+      let carousel_image_url = series.carousel_image_url;
+      
       if (thumbnail_url) {
         // Generate CDN signed URL for thumbnail using common method
         thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
       }
-      return { ...series.toJSON(), thumbnail_url };
+      
+      if (carousel_image_url) {
+        // Generate CDN signed URL for carousel image if it exists
+        carousel_image_url = generateCdnSignedUrlForThumbnail(carousel_image_url);
+      }
+      
+      return { ...series.toJSON(), thumbnail_url, carousel_image_url };
     }));
     res.json({ total: count, series: seriesWithPoster });
   } catch (error) {

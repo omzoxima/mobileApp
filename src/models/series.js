@@ -20,6 +20,9 @@ export default (sequelize) => {
     thumbnail_url: {
       type: DataTypes.STRING
     },
+    carousel_image_url: {
+      type: DataTypes.STRING
+    },
     category_id: {
       type: DataTypes.UUID,
       references: {
