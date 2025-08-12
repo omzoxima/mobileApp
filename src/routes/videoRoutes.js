@@ -154,7 +154,7 @@ router.get('/episodes/:Id/hls-url1', async (req, res) => {
     const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
     const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
     const KEY_B64URL = process.env.CDN_KEY_SECRET;
-    const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
+    const TTL_SECS = parseInt(process.env.TTL_SECS || '5400', 10);
 
     if (!KEY_B64URL) {
       console.error('❌ ERROR: CDN_KEY_SECRET not set');
