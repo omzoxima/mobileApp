@@ -188,11 +188,11 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     }
 
     const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
-    const urlPrefix = `https://${CDN_HOST}/${folderPrefix}`;
+    const urlPrefix = `https://${CDN_HOST}${folderPrefix}`;
     const cookieValue = generateSignedCookie(urlPrefix, KEY_NAME, KEY_BYTES, expires);
 
     // Example: first file you want to play
-    const playlistUrl = `https://${CDN_HOST}/${folderPrefix}playlist.m3u8`;
+    const playlistUrl = `https://${CDN_HOST}${folderPrefix}playlist.m3u8`;
 
     // Set cookie header for the folder
     res.cookie('Cloud-CDN-Cookie', cookieValue, {
