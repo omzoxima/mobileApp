@@ -8,7 +8,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { promisify } from 'util';
 import stream from 'stream';
-import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
+import { generateCdnSignedUrlForThumbnail,generateCdnSignedCookie } from '../services/cdnService.js';
 // POST /api/video/process-hls-cdn - Process video and generate HLS with CDN URLs
 import ffmpeg from 'fluent-ffmpeg';
 import ffmpegStatic from 'ffmpeg-static';
@@ -47,7 +47,7 @@ router.get('/series', async (req, res) => {
       let thumbnail_url = series.thumbnail_url;
       if (thumbnail_url) {
         // Generate CDN signed URL for thumbnail using common method
-        thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
+        thumbnail_url = generateCdnSignedCookie(thumbnail_url);
       }
       return { ...series.toJSON(), thumbnail_url };
     }));
@@ -148,7 +148,7 @@ router.get('/episodes/:Id/hls-url1', async (req, res) => {
     }
 
     // Hardcoded HLS folder
-    const folderPrefix ='/hls_output/01667586-ec03-4e3d-abc1-22634a0e3fe9/';
+    const folderPrefix ='/hls_output/017b94ad-7468-40d0-a41b-ed7b40d21753/';
 
     // Environment vars
     const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
@@ -196,8 +196,8 @@ router.get('/episodes/:Id/hls-url1', async (req, res) => {
 
     // Set cookie header for the folder
     res.cookie('Cloud-CDN-Cookie', cookieValue, {
-      domain: CDN_HOST,
-      path: `${folderPrefix}`,
+      domain: CDN_HOST,  // e.g., 'cdn.tuktuki.com'
+      path: folderPrefix, // Must match the path of files
       httpOnly: false,
       secure: true,
       sameSite: 'None',
