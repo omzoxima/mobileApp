@@ -25,7 +25,7 @@ export default (sequelize) => {
     appleproductid: {
       type: DataTypes.STRING
     },
-    applePrice: {
+    appleprice: {
       type: DataTypes.INTEGER
     },
     is_popular: {
