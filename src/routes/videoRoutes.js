@@ -136,33 +136,19 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
-    
+
     if (!lang) {
       return res.status(400).json({ error: 'Language code (lang) is required as a query parameter.' });
     }
 
-    // Fetch episode from DB
+    // Fetch episode just for validation
     const episode = await models.Episode.findByPk(Id);
     if (!episode) {
       return res.status(404).json({ error: 'Episode not found' });
     }
 
-    if (!Array.isArray(episode.subtitles)) {
-      return res.status(404).json({ error: 'No HLS info found for this episode' });
-    }
-
-    // Get the subtitle info for requested language
-    const subtitle = episode.subtitles.find(s => s.language === lang);
-    if (!subtitle) {
-      return res.status(404).json({ error: 'No subtitle found for the requested language' });
-    }
-
-    if (!subtitle.hdTsPath || !subtitle.gcsPath) {
-      return res.status(404).json({ error: 'Missing HLS paths in subtitle' });
-    }
-
-    // Extract folder prefix from hdTsPath → hls_output/UUID/
-    const folderPrefix = subtitle.hdTsPath.split('/').slice(0, -1).join('/') + '/';
+    // Hardcoded HLS folder
+    const folderPrefix ='/hls_output/01667586-ec03-4e3d-abc1-22634a0e3fe9/';
 
     // Environment vars
     const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
@@ -175,13 +161,12 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
       return res.status(500).json({ error: 'CDN_KEY_SECRET not set' });
     }
 
-    // Base64URL helpers
+    // Helpers
     function b64urlDecode(b64url) {
       let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
       while (b64.length % 4 !== 0) b64 += '=';
       return Buffer.from(b64, 'base64');
     }
-
     function b64urlEncode(buf) {
       return Buffer.from(buf)
         .toString('base64')
@@ -192,7 +177,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
 
     const KEY_BYTES = b64urlDecode(KEY_B64URL);
 
-    // Generate signed cookie
+    // Generate signed cookie string
     function generateSignedCookie(urlPrefix, keyName, keyBytes, expiresEpoch) {
       const stringToSign = `${urlPrefix}?Expires=${expiresEpoch}&KeyName=${keyName}`;
       const sig = crypto.createHmac('sha1', keyBytes)
@@ -206,14 +191,14 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     const urlPrefix = `https://${CDN_HOST}/${folderPrefix}`;
     const cookieValue = generateSignedCookie(urlPrefix, KEY_NAME, KEY_BYTES, expires);
 
-    // Playlist URL (no signing needed, cookie will allow access)
-    const playlistUrl = `https://${CDN_HOST}/${subtitle.gcsPath}`;
+    // Example: first file you want to play
+    const playlistUrl = `https://${CDN_HOST}/${folderPrefix}playlist.m3u8`;
 
-    // Set cookie header so client automatically sends it for all requests in folder
+    // Set cookie header for the folder
     res.cookie('Cloud-CDN-Cookie', cookieValue, {
       domain: CDN_HOST,
       path: `/${folderPrefix}`,
-      httpOnly: false, // Player must be able to send this in requests
+      httpOnly: false,
       secure: true,
       sameSite: 'None',
       expires: new Date(expires * 1000)
@@ -222,7 +207,8 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     return res.json({
       playlistUrl,
       expiresAt: new Date(expires * 1000).toISOString(),
-      ttl: TTL_SECS
+      ttl: TTL_SECS,
+      cookieValue
     });
 
   } catch (e) {
@@ -230,6 +216,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     return res.status(500).json({ error: 'sign failure', details: e.message });
   }
 });
+
 
 
 // HLS Signer Route - Based on server.js functionality
