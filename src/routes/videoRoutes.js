@@ -132,7 +132,23 @@ router.get('/episodes/:id', async (req, res) => {
 // GET /api/episode-bundles
 router.get('/episode-bundles', async (req, res) => {
   try {
+    const { platform } = req.query; // Get platform from query params
+    
     const bundles = await EpisodeBundlePrice.findAll();
+    
+    // If iOS platform is requested, include Apple product details but exclude price_points and productId
+    if (platform === 'ios') {
+      const iosBundles = bundles.map(bundle => {
+        const bundleData = bundle.toJSON();
+        // Remove price_points and productId for iOS
+        delete bundleData.price_points;
+        delete bundleData.productId;
+        return bundleData;
+      });
+      return res.json(iosBundles);
+    }
+    
+    // For Android or any other platform, return existing response
     res.json(bundles);
   } catch (error) {
     res.status(500).json({ error: error.message });

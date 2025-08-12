@@ -22,6 +22,12 @@ export default (sequelize) => {
     price_points: {
       type: DataTypes.INTEGER
     },
+    appleProductId: {
+      type: DataTypes.STRING
+    },
+    applePrice: {
+      type: DataTypes.INTEGER
+    },
     is_popular: {
       type: DataTypes.BOOLEAN,
       defaultValue: false
