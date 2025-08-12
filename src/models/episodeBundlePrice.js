@@ -22,7 +22,7 @@ export default (sequelize) => {
     price_points: {
       type: DataTypes.INTEGER
     },
-    appleProductId: {
+    appleproductid: {
       type: DataTypes.STRING
     },
     applePrice: {
