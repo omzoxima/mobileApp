@@ -1,5 +1,6 @@
 import express from 'express';
 import models from '../models/index.js';
+import crypto from 'crypto';
 
 import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
 
