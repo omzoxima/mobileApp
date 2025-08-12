@@ -131,9 +131,110 @@ router.get('/episode-bundles', async (req, res) => {
   }
 });
 
-// HLS Signer Route - Based on server.js functionality
 
 router.get('/episodes/:Id/hls-url', async (req, res) => {
+  try {
+    const { Id } = req.params;
+    const { lang } = req.query;
+    
+    if (!lang) {
+      return res.status(400).json({ error: 'Language code (lang) is required as a query parameter.' });
+    }
+
+    // Fetch episode from DB
+    const episode = await models.Episode.findByPk(Id);
+    if (!episode) {
+      return res.status(404).json({ error: 'Episode not found' });
+    }
+
+    if (!Array.isArray(episode.subtitles)) {
+      return res.status(404).json({ error: 'No HLS info found for this episode' });
+    }
+
+    // Get the subtitle info for requested language
+    const subtitle = episode.subtitles.find(s => s.language === lang);
+    if (!subtitle) {
+      return res.status(404).json({ error: 'No subtitle found for the requested language' });
+    }
+
+    if (!subtitle.hdTsPath || !subtitle.gcsPath) {
+      return res.status(404).json({ error: 'Missing HLS paths in subtitle' });
+    }
+
+    // Extract folder prefix from hdTsPath → hls_output/UUID/
+    const folderPrefix = subtitle.hdTsPath.split('/').slice(0, -1).join('/') + '/';
+
+    // Environment vars
+    const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
+    const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
+    const KEY_B64URL = process.env.CDN_KEY_SECRET;
+    const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
+
+    if (!KEY_B64URL) {
+      console.error('❌ ERROR: CDN_KEY_SECRET not set');
+      return res.status(500).json({ error: 'CDN_KEY_SECRET not set' });
+    }
+
+    // Base64URL helpers
+    function b64urlDecode(b64url) {
+      let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
+      while (b64.length % 4 !== 0) b64 += '=';
+      return Buffer.from(b64, 'base64');
+    }
+
+    function b64urlEncode(buf) {
+      return Buffer.from(buf)
+        .toString('base64')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+    }
+
+    const KEY_BYTES = b64urlDecode(KEY_B64URL);
+
+    // Generate signed cookie
+    function generateSignedCookie(urlPrefix, keyName, keyBytes, expiresEpoch) {
+      const stringToSign = `${urlPrefix}?Expires=${expiresEpoch}&KeyName=${keyName}`;
+      const sig = crypto.createHmac('sha1', keyBytes)
+        .update(stringToSign, 'utf8')
+        .digest();
+      const encodedSig = b64urlEncode(sig);
+      return `Expires=${expiresEpoch}&KeyName=${keyName}&Signature=${encodedSig}`;
+    }
+
+    const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
+    const urlPrefix = `https://${CDN_HOST}/${folderPrefix}`;
+    const cookieValue = generateSignedCookie(urlPrefix, KEY_NAME, KEY_BYTES, expires);
+
+    // Playlist URL (no signing needed, cookie will allow access)
+    const playlistUrl = `https://${CDN_HOST}/${subtitle.gcsPath}`;
+
+    // Set cookie header so client automatically sends it for all requests in folder
+    res.cookie('Cloud-CDN-Cookie', cookieValue, {
+      domain: CDN_HOST,
+      path: `/${folderPrefix}`,
+      httpOnly: false, // Player must be able to send this in requests
+      secure: true,
+      sameSite: 'None',
+      expires: new Date(expires * 1000)
+    });
+
+    return res.json({
+      playlistUrl,
+      expiresAt: new Date(expires * 1000).toISOString(),
+      ttl: TTL_SECS
+    });
+
+  } catch (e) {
+    console.error('Signed cookie generation failure:', e);
+    return res.status(500).json({ error: 'sign failure', details: e.message });
+  }
+});
+
+
+// HLS Signer Route - Based on server.js functionality
+
+/*router.get('/episodes/:Id/hls-url', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
@@ -234,317 +335,8 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     console.error('Sign failure:', e);
     return res.status(500).json({ error: 'sign failure', details: e.message });
   }
-});
-
-// POST /api/episodes/:Id/convert-ts-to-m3u8 - Convert TS file to M3U8 using Google Cloud services
-router.post('/episodes/:Id/convert-ts-to-m3u8', async (req, res) => {
-  try {
-    const { Id } = req.params;
-    const { lang } = req.query;
-    
-    if (!lang) {
-      return res.status(400).json({ error: 'Language code (lang) is required as a query parameter.' });
-    }
-
-    // Get episode and subtitle info
-    const episode = await models.Episode.findByPk(Id);
-    if (!episode) {
-      return res.status(404).json({ error: 'Episode not found' });
-    }
-
-    if (!Array.isArray(episode.subtitles)) {
-      return res.status(404).json({ error: 'No HLS info found for this episode' });
-    }
-
-    const subtitle = episode.subtitles.find(s => s.language === lang);
-    if (!subtitle) {
-      return res.status(404).json({ error: 'No subtitle found for the requested language' });
-    }
-
-    if (!subtitle.hdTsPath) {
-      return res.status(404).json({ error: 'No hdTsPath found for this subtitle' });
-    }
-
-    // GCS Configuration
-    const storage = new Storage();
-    const bucketName = process.env.GCS_BUCKET_NAME || 'run-sources-tuktuki-464514-asia-south1';
-    const bucket = storage.bucket(bucketName);
-
-    // Extract path and filename from hdTsPath
-    const tsPath = subtitle.hdTsPath;
-    const tsDir = path.dirname(tsPath);
-    const tsName = path.basename(tsPath, '.ts');
-    const m3u8Path = path.join(tsDir, `${tsName}.m3u8`);
-
-    console.log('🔄 Processing TS to M3U8 conversion in Google Cloud...');
-    console.log('Bucket:', bucketName);
-    console.log('Input TS Path:', tsPath);
-    console.log('Output M3U8 Path:', m3u8Path);
-
-    // Check if TS file exists in GCS
-    const tsFile = bucket.file(tsPath);
-    const [tsExists] = await tsFile.exists();
-    
-    if (!tsExists) {
-      return res.status(404).json({ error: 'TS file not found in GCS bucket' });
-    }
-
-    // For Google Cloud, we'll create a simple M3U8 playlist that references the existing TS file
-    // This is a common approach when you already have TS files and just need a playlist
-    const m3u8Content = `#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-TARGETDURATION:10
-#EXT-X-MEDIA-SEQUENCE:0
-#EXT-X-PLAYLIST-TYPE:VOD
-#EXTINF:10.0,
-${tsPath}
-#EXT-X-ENDLIST`;
-
-    console.log('📝 Creating M3U8 playlist content...');
-    console.log('M3U8 Content:', m3u8Content);
-
-    // Upload M3U8 file to GCS bucket in the same folder
-    console.log('📤 Uploading M3U8 file to GCS...');
-    await bucket.file(m3u8Path).save(m3u8Content, {
-      metadata: {
-        contentType: 'application/vnd.apple.mpegurl'
-      }
-    });
-    console.log('✅ M3U8 file uploaded to GCS:', m3u8Path);
-
-    // Update subtitle hdTsPath to point to M3U8 file
-    subtitle.hdTsPath = m3u8Path;
-    await episode.save();
-    console.log('💾 Database updated with new M3U8 path');
-
-    // Generate signed URL for the new M3U8 file
-    const p = `/${m3u8Path}`;
-    const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
-    const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
-    const KEY_B64URL = process.env.CDN_KEY_SECRET;
-    const TTL_SECS = parseInt(process.env.TTL_SECS || '1800', 10);
-
-    if (!KEY_B64URL) {
-      return res.status(500).json({ error: 'CDN_KEY_SECRET environment variable not set' });
-    }
-
-    // Base64url helpers
-    function b64urlDecode(b64url) {
-      let b64 = b64url.replace(/-/g, '+').replace(/_/g, '/');
-      while (b64.length % 4 !== 0) b64 += '=';
-      return Buffer.from(b64, 'base64');
-    }
-
-    function b64urlEncode(buf) {
-      return Buffer.from(buf)
-        .toString('base64')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '');
-    }
-
-    const KEY_BYTES = b64urlDecode(KEY_B64URL);
-
-    // Sign a FULL URL
-    function signFullUrl(fullUrl, keyName, keyBytes, expiresEpoch) {
-      const sep = fullUrl.includes('?') ? '&' : '?';
-      const urlToSign = `${fullUrl}${sep}Expires=${expiresEpoch}&KeyName=${encodeURIComponent(keyName)}`;
-      const hmac = crypto.createHmac('sha1', keyBytes);
-      hmac.update(urlToSign, 'utf8');
-      const sig = b64urlEncode(hmac.digest());
-      return `${urlToSign}&Signature=${sig}`;
-    }
-
-    const upstream = new URL(`https://${CDN_HOST}${p}`);
-    const expires = Math.floor(Date.now() / 1000) + TTL_SECS;
-    const signed = signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
-
-    console.log('🔐 Generated signed URL for M3U8 file');
-    console.log('Original Path:', p);
-    console.log('Signed URL:', signed);
-
-    return res.json({
-      success: true,
-      message: 'TS file converted to M3U8 successfully using Google Cloud services',
-      bucketName: bucketName,
-      originalTsPath: tsPath,
-      newM3u8Path: m3u8Path,
-      signedUrl: signed,
-      ttl: TTL_SECS,
-      cdnHost: CDN_HOST,
-      expiresAt: new Date(expires * 1000).toISOString()
-    });
-
-  } catch (error) {
-    console.error('TS to M3U8 conversion error:', error);
-    return res.status(500).json({ 
-      error: 'Conversion failed', 
-      details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
+});*/
 
 
-
-router.post('/video/process-hls-cdn', async (req, res) => {
-  try {
-    const { outputPrefix } = req.body;
-    
-    // Use the specific video path
-    const videoFileName = 'videos/hi/0039b436-38cb-456a-bf2e-bec12ab15eca.mp4';
-
-    // Configuration
-    const CDN_CONFIG = {
-      domain: process.env.CDN_DOMAIN || 'cdn.tuktuki.com',
-      keyName: process.env.CDN_KEY_NAME || 'key1',
-      base64Key: process.env.CDN_KEY_SECRET,
-      defaultTtl: parseInt(process.env.TTL_SECS || '3600', 10)
-    };
-
-    if (!CDN_CONFIG.base64Key) {
-      return res.status(500).json({ error: 'CDN_KEY_SECRET environment variable not set' });
-    }
-
-    const BUCKET_NAME = process.env.GCS_BUCKET_NAME || 'run-sources-tuktuki-464514-asia-south1';
-    const VIDEO_SEGMENT_DURATION = 10;
-    const HLS_PLAYLIST_NAME = 'playlist.m3u8';
-
-    // Initialize Google Cloud Storage
-    const storage = new Storage();
-    const bucket = storage.bucket(BUCKET_NAME);
-
-    // Generate CDN signed URL
-    function generateCdnSignedUrl(path, expiresAt = null) {
-      const expiryTime = expiresAt || Math.floor(Date.now() / 1000) + CDN_CONFIG.defaultTtl;
-      const urlToSign = `${path}?Expires=${expiryTime}&KeyName=${CDN_CONFIG.keyName}`;
-      
-      // Decode the base64 key
-      const key = Buffer.from(CDN_CONFIG.base64Key, 'base64');
-      
-      // Create HMAC signature
-      const hmac = crypto.createHmac('sha1', key);
-      hmac.update(urlToSign);
-      const signature = hmac.digest('base64');
-      
-      // URL encode the signature
-      const urlSafeSignature = signature
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '');
-      
-      // Construct final URL
-      return `https://${CDN_CONFIG.domain}${urlToSign}&Signature=${urlSafeSignature}`;
-    }
-
-    // Convert video to HLS format using fluent-ffmpeg with GCS streams
-    async function convertVideoToHLS(inputVideoPath, outputPrefix) {
-      return new Promise((resolve, reject) => {
-        // Create read stream from GCS
-        const inputStream = bucket.file(inputVideoPath).createReadStream();
-        
-        // Temporary directory for processing
-        const tempDir = '/tmp/hls-processing';
-        if (!fs.existsSync(tempDir)) {
-          fs.mkdirSync(tempDir, { recursive: true });
-        }
-
-        const tempOutputPath = path.join(tempDir, path.basename(outputPrefix));
-        if (!fs.existsSync(tempOutputPath)) {
-          fs.mkdirSync(tempOutputPath, { recursive: true });
-        }
-
-        const command = ffmpeg(inputStream)
-          .outputOptions([
-            '-profile:v baseline',
-            '-level 3.0',
-            '-start_number 0',
-            `-hls_time ${VIDEO_SEGMENT_DURATION}`,
-            '-hls_list_size 0',
-            '-f hls'
-          ])
-          .output(path.join(tempOutputPath, HLS_PLAYLIST_NAME))
-          .on('start', (commandLine) => {
-            console.log('FFmpeg command:', commandLine);
-          })
-          .on('progress', (progress) => {
-            console.log(`Processing: ${progress.timemark}`);
-          })
-          .on('end', async () => {
-            try {
-              // Upload all generated files to GCS
-              const files = fs.readdirSync(tempOutputPath);
-              await Promise.all(files.map(file => {
-                const localPath = path.join(tempOutputPath, file);
-                const remotePath = path.join(outputPrefix, file);
-                return bucket.upload(localPath, {
-                  destination: remotePath,
-                  metadata: {
-                    contentType: file.endsWith('.m3u8') ? 'application/x-mpegURL' : 'video/MP2T'
-                  }
-                });
-              }));
-              
-              // Clean up
-              fs.rmSync(tempDir, { recursive: true, force: true });
-              resolve(outputPrefix);
-            } catch (uploadError) {
-              reject(uploadError);
-            }
-          })
-          .on('error', (err) => {
-            console.error('FFmpeg error:', err);
-            fs.rmSync(tempDir, { recursive: true, force: true }).catch(() => {});
-            reject(err);
-          });
-
-        command.run();
-      });
-    }
-
-    console.log('🎬 Starting video processing with HLS and CDN...');
-    console.log('Video File:', videoFileName);
-    console.log('Full GCS Path:', `${BUCKET_NAME}/${videoFileName}`);
-    console.log('Bucket:', BUCKET_NAME);
-
-    const uniquePrefix = outputPrefix || `hls_output/${uuidv4()}`;
-    
-    // Convert video to HLS format
-    console.log('🔄 Converting video to HLS format...');
-    await convertVideoToHLS(videoFileName, uniquePrefix);
-    console.log('✅ HLS conversion completed');
-
-    // Generate CDN signed URL for the playlist
-    const playlistPath = `${uniquePrefix}/${HLS_PLAYLIST_NAME}`;
-    const cdnSignedUrl = generateCdnSignedUrl(playlistPath);
-    console.log('🔐 Generated CDN signed URL for playlist');
-
-    const result = {
-      success: true,
-      message: 'Video processed successfully with HLS and CDN URLs',
-      cdnPlaylistUrl: cdnSignedUrl,
-      gcsPlaylistPath: playlistPath,
-      gcsSegmentsPath: uniquePrefix,
-      bucketName: BUCKET_NAME,
-      cdnDomain: CDN_CONFIG.domain,
-      ttl: CDN_CONFIG.defaultTtl
-    };
-
-    console.log('🎉 Video processing completed successfully!');
-    console.log('CDN Signed Playlist URL:', cdnSignedUrl);
-    console.log('GCS Playlist Path:', playlistPath);
-
-    return res.json(result);
-
-  } catch (error) {
-    console.error('Video processing error:', error);
-
-    return res.status(500).json({ 
-      error: 'Video processing failed', 
-      details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
 
 export default router;
