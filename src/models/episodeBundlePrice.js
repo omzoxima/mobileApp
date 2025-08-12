@@ -10,6 +10,12 @@ export default (sequelize) => {
     bundle_name: {
       type: DataTypes.STRING
     },
+    productId: {
+      type: DataTypes.STRING
+    },
+    productName: {
+      type: DataTypes.STRING
+    },
     bundle_count: {
       type: DataTypes.INTEGER
     },
