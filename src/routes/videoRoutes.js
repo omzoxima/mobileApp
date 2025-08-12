@@ -132,7 +132,7 @@ router.get('/episode-bundles', async (req, res) => {
 });
 
 
-router.get('/episodes/:Id/hls-url', async (req, res) => {
+router.get('/episodes/:Id/hls-url1', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
@@ -221,7 +221,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
 
 // HLS Signer Route - Based on server.js functionality
 
-/*router.get('/episodes/:Id/hls-url', async (req, res) => {
+router.get('/episodes/:Id/hls-url', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
@@ -322,7 +322,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     console.error('Sign failure:', e);
     return res.status(500).json({ error: 'sign failure', details: e.message });
   }
-});*/
+});
 
 
 
