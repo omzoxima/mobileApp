@@ -47,7 +47,7 @@ router.get('/series', async (req, res) => {
       let thumbnail_url = series.thumbnail_url;
       if (thumbnail_url) {
         // Generate CDN signed URL for thumbnail using common method
-        thumbnail_url = generateCdnSignedCookie(thumbnail_url);
+        thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
       }
       return { ...series.toJSON(), thumbnail_url };
     }));
