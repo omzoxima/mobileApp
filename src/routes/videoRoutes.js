@@ -2,14 +2,21 @@ import express from 'express';
 import models from '../models/index.js';
 import crypto from 'crypto';
 import { Storage } from '@google-cloud/storage';
-import ffmpeg from 'fluent-ffmpeg';
+//import ffmpeg from 'fluent-ffmpeg';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { promisify } from 'util';
 import stream from 'stream';
 import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
+// POST /api/video/process-hls-cdn - Process video and generate HLS with CDN URLs
+import ffmpeg from 'fluent-ffmpeg';
+import ffmpegStatic from 'ffmpeg-static';
+import ffprobeStatic from 'ffprobe-static';
 
+// Set FFmpeg path
+ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
 const pipeline = promisify(stream.pipeline);
 
 
@@ -378,7 +385,8 @@ ${tsPath}
   }
 });
 
-// POST /api/video/process-hls-cdn - Process video and generate HLS with CDN URLs
+
+
 router.post('/video/process-hls-cdn', async (req, res) => {
   try {
     const { outputPrefix } = req.body;
@@ -435,21 +443,18 @@ router.post('/video/process-hls-cdn', async (req, res) => {
         // Create read stream from GCS
         const inputStream = bucket.file(inputVideoPath).createReadStream();
         
-        // Create write stream to GCS for M3U8 playlist
-        const m3u8WriteStream = bucket.file(`${outputPrefix}/${HLS_PLAYLIST_NAME}`).createWriteStream({
-          metadata: {
-            contentType: 'application/x-mpegURL'
-          }
-        });
+        // Temporary directory for processing
+        const tempDir = '/tmp/hls-processing';
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
 
-        // Create write stream to GCS for TS segments
-        const tsWriteStream = bucket.file(`${outputPrefix}/segment.ts`).createWriteStream({
-          metadata: {
-            contentType: 'video/MP2T'
-          }
-        });
+        const tempOutputPath = path.join(tempDir, path.basename(outputPrefix));
+        if (!fs.existsSync(tempOutputPath)) {
+          fs.mkdirSync(tempOutputPath, { recursive: true });
+        }
 
-        ffmpeg(inputStream)
+        const command = ffmpeg(inputStream)
           .outputOptions([
             '-profile:v baseline',
             '-level 3.0',
@@ -458,14 +463,44 @@ router.post('/video/process-hls-cdn', async (req, res) => {
             '-hls_list_size 0',
             '-f hls'
           ])
-          .output(m3u8WriteStream)
-          .on('end', () => resolve(outputPrefix))
-          .on('error', (err) => reject(err))
-          .run();
+          .output(path.join(tempOutputPath, HLS_PLAYLIST_NAME))
+          .on('start', (commandLine) => {
+            console.log('FFmpeg command:', commandLine);
+          })
+          .on('progress', (progress) => {
+            console.log(`Processing: ${progress.timemark}`);
+          })
+          .on('end', async () => {
+            try {
+              // Upload all generated files to GCS
+              const files = fs.readdirSync(tempOutputPath);
+              await Promise.all(files.map(file => {
+                const localPath = path.join(tempOutputPath, file);
+                const remotePath = path.join(outputPrefix, file);
+                return bucket.upload(localPath, {
+                  destination: remotePath,
+                  metadata: {
+                    contentType: file.endsWith('.m3u8') ? 'application/x-mpegURL' : 'video/MP2T'
+                  }
+                });
+              }));
+              
+              // Clean up
+              fs.rmSync(tempDir, { recursive: true, force: true });
+              resolve(outputPrefix);
+            } catch (uploadError) {
+              reject(uploadError);
+            }
+          })
+          .on('error', (err) => {
+            console.error('FFmpeg error:', err);
+            fs.rmSync(tempDir, { recursive: true, force: true }).catch(() => {});
+            reject(err);
+          });
+
+        command.run();
       });
     }
-
-    // No local upload needed - everything goes directly to GCS
 
     console.log('🎬 Starting video processing with HLS and CDN...');
     console.log('Video File:', videoFileName);
@@ -474,24 +509,22 @@ router.post('/video/process-hls-cdn', async (req, res) => {
 
     const uniquePrefix = outputPrefix || `hls_output/${uuidv4()}`;
     
-    // Convert video directly from GCS to HLS in GCS
-    console.log('🔄 Converting video to HLS format directly in GCS...');
+    // Convert video to HLS format
+    console.log('🔄 Converting video to HLS format...');
     await convertVideoToHLS(videoFileName, uniquePrefix);
-    console.log('✅ HLS conversion completed in GCS');
+    console.log('✅ HLS conversion completed');
 
     // Generate CDN signed URL for the playlist
-    const playlistPath = `${gcsOutputPath}/${HLS_PLAYLIST_NAME}`;
+    const playlistPath = `${uniquePrefix}/${HLS_PLAYLIST_NAME}`;
     const cdnSignedUrl = generateCdnSignedUrl(playlistPath);
     console.log('🔐 Generated CDN signed URL for playlist');
-
-    // No local files to clean up - everything is in GCS
 
     const result = {
       success: true,
       message: 'Video processed successfully with HLS and CDN URLs',
       cdnPlaylistUrl: cdnSignedUrl,
       gcsPlaylistPath: playlistPath,
-      gcsSegmentsPath: gcsOutputPath,
+      gcsSegmentsPath: uniquePrefix,
       bucketName: BUCKET_NAME,
       cdnDomain: CDN_CONFIG.domain,
       ttl: CDN_CONFIG.defaultTtl
