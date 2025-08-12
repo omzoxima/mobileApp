@@ -197,7 +197,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     // Set cookie header for the folder
     res.cookie('Cloud-CDN-Cookie', cookieValue, {
       domain: CDN_HOST,
-      path: `/${folderPrefix}`,
+      path: `${folderPrefix}`,
       httpOnly: false,
       secure: true,
       sameSite: 'None',
