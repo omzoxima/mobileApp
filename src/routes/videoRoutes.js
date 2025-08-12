@@ -223,8 +223,8 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
   }
 });
 
-// POST /api/episodes/:id/convert-ts-to-m3u8 - Convert TS file to M3U8 using Google Cloud services
-router.post('/episodes/:id/convert-ts-to-m3u8', async (req, res) => {
+// POST /api/episodes/:Id/convert-ts-to-m3u8 - Convert TS file to M3U8 using Google Cloud services
+router.post('/episodes/:Id/convert-ts-to-m3u8', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
