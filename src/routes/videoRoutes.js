@@ -319,11 +319,23 @@ router.get('/episode-bundles', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router.post("/signedcookie", async (req, res, next) => {
+router.post("/signedcookie/:episodeId", async (req, res, next) => {
   try {
+    const { episodeId } = req.params;
+    const { language } = req.body;
+    
+    // Get episode by ID
+    const episode = await models.Episode.findByPk(episodeId);
+    if (!episode) {
+      return res.status(404).json({ status: 0, message: 'Episode not found' });
+    }
+    
+    // Get subtitle information
+    const subtitles = episode.subtitles;
+    
     let key_name = process.env.CDN_KEY_NAME;
     let signed_cookie_key = process.env.CDN_KEY_SECRET;
-    const urlPrefix = req.body.url_prefix.trim();
+    const urlPrefix = subtitles.hdTsPath.trim();
 
     console.log("key_name=", key_name, "signed_cookie_key=", signed_cookie_key)
     
@@ -341,7 +353,7 @@ router.post("/signedcookie", async (req, res, next) => {
       .digest('base64').replace(/\+/g, '-')
       .replace(/\//g, '_');
     const signed_policy = `${policy_pattern}:Signature=${signature}`;
-    res.status(200).send({ status: 1, url: signed_policy })
+    res.status(200).send({ status: 1, url: signed_policy, playlistUrl: subtitles.gcsPath })
   } catch (error) {
     res.status(500).send({ status: 0, message: error })
   }
