@@ -35,7 +35,10 @@ const PORT = process.env.PORT || 8080;
 // Check both database and Redis connections
 Promise.all([
   sequelize.authenticate(),
-  import('./config/redis.js').then(redis => redis.checkRedisHealth())
+  import('./config/redis.js').then(redisModule => {
+    console.log('📦 Redis module loaded successfully');
+    return redisModule.checkRedisHealth();
+  })
 ])
 .then(([dbResult, redisResult]) => {
   console.log('✅ Database connection established successfully');
