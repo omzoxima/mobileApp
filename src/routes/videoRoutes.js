@@ -332,10 +332,21 @@ router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
       });
     }
     
+    // Check if user exists against device ID
+    const user = await models.User.findOne({ where: { device_id: deviceId } });
+    if (!user) {
+      console.log('No user found for device ID:', deviceId);
+      return res.status(401).json({ 
+        status: 0, 
+        message: 'Device ID has no use - user not found' 
+      });
+    }
+    
     console.log('=== SIGNED COOKIE ROUTE DEBUG ===');
     console.log('Episode ID received:', episodeId);
     console.log('Language received:', language);
     console.log('Device ID received:', deviceId);
+    console.log('User found:', { id: user.id, device_id: user.device_id });
     
     // Get episode by ID
     const episode = await models.Episode.findByPk(episodeId);
@@ -353,17 +364,32 @@ router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
     
     // Get subtitle information
     const subtitles = episode.subtitles;
-    if (!subtitles || !subtitles.hdTsPath) {
-      console.log('No subtitles or hdTsPath found in episode');
+    if (!subtitles || !Array.isArray(subtitles) || subtitles.length === 0) {
+      console.log('No subtitles array found in episode');
       return res.status(404).json({ status: 0, message: 'No subtitles found for this episode' });
     }
     
-    console.log('Subtitles data:', subtitles);
-    console.log('hdTsPath extracted:', subtitles.hdTsPath);
+    console.log('Subtitles array:', subtitles);
+    
+    // Find subtitle matching the requested language
+    const subtitle = subtitles.find(sub => sub.language === language);
+    if (!subtitle || !subtitle.hdTsPath) {
+      console.log('No subtitle found for language:', language);
+      console.log('Available languages:', subtitles.map(sub => sub.language));
+      return res.status(404).json({ 
+        status: 0, 
+        message: `No subtitle found for language: ${language}`,
+        availableLanguages: subtitles.map(sub => sub.language)
+      });
+    }
+    
+    console.log('Found subtitle for language:', language);
+    console.log('Subtitle data:', subtitle);
+    console.log('hdTsPath extracted:', subtitle.hdTsPath);
     
     let key_name = process.env.CDN_KEY_NAME;
     let signed_cookie_key = process.env.CDN_KEY_SECRET;
-    const urlPrefix = subtitles.hdTsPath.trim();
+    const urlPrefix = subtitle.hdTsPath.trim();
     
     console.log('CDN Key Name:', key_name);
     console.log('CDN Key Secret exists:', !!signed_cookie_key);
@@ -385,7 +411,7 @@ router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
       .digest('base64').replace(/\+/g, '-')
       .replace(/\//g, '_');
     const signed_policy = `${policy_pattern}:Signature=${signature}`;
-    res.status(200).send({ status: 1, url: signed_policy, playlistUrl: subtitles.gcsPath })
+    res.status(200).send({ status: 1, url: signed_policy, playlistUrl: subtitle.gcsPath })
   } catch (error) {
     res.status(500).send({ status: 0, message: error })
   }
