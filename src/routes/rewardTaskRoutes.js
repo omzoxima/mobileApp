@@ -8,7 +8,7 @@ import jwt from 'jsonwebtoken';
 const { RewardTask, RewardTransaction, User, AdReward, EpisodeUserAccess } = models;
 const router = express.Router();
 
-// Optimized /reward_task route
+// /reward_task route - NO CACHING as requested
 router.get('/reward_task', async (req, res) => {
   const { User, RewardTask, RewardTransaction } = models;
   try {
@@ -21,35 +21,12 @@ router.get('/reward_task', async (req, res) => {
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       user = await User.findByPk(payload.userId);
     } else if (deviceId) {
-      // Try to get user session from cache first
-      const { apiCache } = await import('../config/redis.js');
-      let userSession = await apiCache.getUserSession(deviceId);
-      
-      if (userSession) {
-        user = userSession;
-        console.log('👤 Reward Task: User session served from cache');
-      } else {
-        // Fetch user from database
-        user = await User.findOne({ where: { device_id: deviceId } });
-        
-        if (user) {
-          // Cache user session for 2 hours
-          await apiCache.setUserSession(deviceId, user);
-          console.log('💾 Reward Task: User session cached for 2 hours');
-        }
-      }
+      user = await User.findOne({ where: { device_id: deviceId } });
     }
+    
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
-    // Try to get reward tasks from cache first
-    const { apiCache } = await import('../config/redis.js');
-    const cachedTasks = await apiCache.getRewardTasksCache();
-    if (cachedTasks) {
-      console.log('📦 Reward tasks served from cache');
-      return res.json(cachedTasks);
-    }
-
-    // Get all active reward tasks
+    // Get all active reward tasks (NO CACHE)
     const tasks = await RewardTask.findAll({ where: { is_active: true } });
 
     // Get all user's reward transactions for one_time tasks
@@ -58,7 +35,7 @@ router.get('/reward_task', async (req, res) => {
       where: { user_id: user.id, task_id: { [Op.in]: oneTimeTaskIds } }
     });
     const claimedIds = new Set(claimed.map(r => r.task_id));
-   //console.log(claimedIds);
+
     // --- Get streak task ids for current streak ---
     // Find user's current streak
     const currentStreak = user.current_streak || 0;
@@ -88,6 +65,7 @@ router.get('/reward_task', async (req, res) => {
       unlock_value: task.unlock_value,
       max_count: task.max_count
     }));
+    
     // Combine claimed one-time and completed streak task IDs for completed_streak_task_ids
     const allCompletedTaskIds = Array.from(new Set([
       ...Array.from(claimedIds),
@@ -96,15 +74,11 @@ router.get('/reward_task', async (req, res) => {
     
     const responseData = {
       tasks: result,
-      completed_streak_task_ids: allCompletedTaskIds,
-      user_id: user.id,
-      cached_at: new Date().toISOString()
+      completed_streak_task_ids: allCompletedTaskIds
+     
     };
     
-    // Cache reward tasks for 2 hours
-    await apiCache.setRewardTasksCache(responseData);
-    console.log('💾 Reward tasks cached for 2 hours');
-    
+    // NO CACHING - return fresh data every time
     res.json(responseData);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -160,20 +134,15 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
       updated_at: new Date()
     });
 
-    // Invalidate relevant caches
+    // Invalidate user session cache if device_id is available (reward tasks not cached)
     try {
       const { apiCache } = await import('../config/redis.js');
       
-      // Invalidate reward tasks cache
-      await apiCache.invalidateRewardTasksCache();
-      
-      // Invalidate user session cache if device_id is available
       if (req.guestDeviceId) {
         await apiCache.invalidateUserSession(req.guestDeviceId);
         await apiCache.invalidateUserTransactionsCache(req.guestDeviceId);
+        console.log('🗑️ User caches invalidated due to reward task completion');
       }
-      
-      console.log('🗑️ Caches invalidated due to reward task completion');
     } catch (cacheError) {
       console.error('Cache invalidation error:', cacheError);
     }
@@ -298,22 +267,15 @@ router.post('/streak/episode-watched', async (req, res) => {
     }
     // --- End daily watch reward logic ---
 
-    // Invalidate relevant caches
+    // Invalidate user session cache (reward tasks not cached)
     try {
       const { apiCache } = await import('../config/redis.js');
       
-      // Invalidate user session cache
       if (device_id) {
         await apiCache.invalidateUserSession(device_id);
         await apiCache.invalidateUserTransactionsCache(device_id);
+        console.log('🗑️ User caches invalidated due to streak update');
       }
-      
-      // Invalidate reward tasks cache if points were awarded
-      if (awardedPoints > 0 || dailyWatchPointAwarded) {
-        await apiCache.invalidateRewardTasksCache();
-      }
-      
-      console.log('🗑️ Caches invalidated due to streak update');
     } catch (cacheError) {
       console.error('Cache invalidation error:', cacheError);
     }
@@ -515,7 +477,7 @@ router.post('/ad-reward', async (req, res) => {
         where: { user_id: user.id }
       });
 
-      // Invalidate relevant caches
+      // Invalidate relevant caches (reward tasks not cached)
       try {
         const { apiCache } = await import('../config/redis.js');
         
@@ -526,9 +488,8 @@ router.post('/ad-reward', async (req, res) => {
         if (deviceId) {
           await apiCache.invalidateUserSession(deviceId);
           await apiCache.invalidateUserTransactionsCache(deviceId);
+          console.log('🗑️ User caches invalidated due to ad reward episode access');
         }
-        
-        console.log('🗑️ Caches invalidated due to ad reward episode access');
       } catch (cacheError) {
         console.error('Cache invalidation error:', cacheError);
       }
