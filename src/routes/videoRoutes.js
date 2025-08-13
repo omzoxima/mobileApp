@@ -319,23 +319,55 @@ router.get('/episode-bundles', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router.post("/signedcookie/:episodeId", async (req, res, next) => {
+router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
   try {
-    const { episodeId } = req.params;
-    const { language } = req.body;
+    const { episodeId, language } = req.params;
+    const deviceId = req.headers['x-device-id'];
+    
+    // Check for mandatory x-device-id header
+    if (!deviceId) {
+      return res.status(401).json({ 
+        status: 0, 
+        message: 'x-device-id header is required' 
+      });
+    }
+    
+    console.log('=== SIGNED COOKIE ROUTE DEBUG ===');
+    console.log('Episode ID received:', episodeId);
+    console.log('Language received:', language);
+    console.log('Device ID received:', deviceId);
     
     // Get episode by ID
     const episode = await models.Episode.findByPk(episodeId);
     if (!episode) {
+      console.log('Episode not found for ID:', episodeId);
       return res.status(404).json({ status: 0, message: 'Episode not found' });
     }
     
+    console.log('Episode found:', {
+      id: episode.id,
+      title: episode.title,
+      language: episode.language,
+      subtitles: episode.subtitles
+    });
+    
     // Get subtitle information
     const subtitles = episode.subtitles;
+    if (!subtitles || !subtitles.hdTsPath) {
+      console.log('No subtitles or hdTsPath found in episode');
+      return res.status(404).json({ status: 0, message: 'No subtitles found for this episode' });
+    }
+    
+    console.log('Subtitles data:', subtitles);
+    console.log('hdTsPath extracted:', subtitles.hdTsPath);
     
     let key_name = process.env.CDN_KEY_NAME;
     let signed_cookie_key = process.env.CDN_KEY_SECRET;
     const urlPrefix = subtitles.hdTsPath.trim();
+    
+    console.log('CDN Key Name:', key_name);
+    console.log('CDN Key Secret exists:', !!signed_cookie_key);
+    console.log('URL Prefix:', urlPrefix);
 
     console.log("key_name=", key_name, "signed_cookie_key=", signed_cookie_key)
     
