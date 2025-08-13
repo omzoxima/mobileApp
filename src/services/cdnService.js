@@ -47,6 +47,42 @@ export function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   return signFullUrl(upstream.toString(), KEY_NAME, KEY_BYTES, expires);
 }
 
+// Utility function to check if a signed URL is expired
+export function isSignedUrlExpired(url) {
+  try {
+    const urlObj = new URL(url);
+    const expiresParam = urlObj.searchParams.get('Expires');
+    
+    if (expiresParam) {
+      const expiryTime = parseInt(expiresParam) * 1000; // Convert to milliseconds
+      const now = Date.now();
+      return now >= expiryTime;
+    }
+    return false;
+  } catch (error) {
+    console.error('Error checking URL expiry:', error);
+    return false;
+  }
+}
+
+// Utility function to get time until URL expires (in milliseconds)
+export function getTimeUntilUrlExpiry(url) {
+  try {
+    const urlObj = new URL(url);
+    const expiresParam = urlObj.searchParams.get('Expires');
+    
+    if (expiresParam) {
+      const expiryTime = parseInt(expiresParam) * 1000; // Convert to milliseconds
+      const now = Date.now();
+      return Math.max(0, expiryTime - now);
+    }
+    return 0;
+  } catch (error) {
+    console.error('Error getting URL expiry time:', error);
+    return 0;
+  }
+}
+
 
 
 

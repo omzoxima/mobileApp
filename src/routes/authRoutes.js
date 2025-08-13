@@ -110,6 +110,19 @@ router.post('/social-login', async (req, res) => {
         }
       }
     }
+    
+    // Invalidate user caches after login
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      if (deviceId) {
+        await apiCache.invalidateUserSession(deviceId);
+        await apiCache.invalidateUserProfileCache(deviceId);
+        console.log('🗑️ User caches invalidated due to social login');
+      }
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+    }
+    
     res.json({ token: jwtToken, user });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -147,43 +160,69 @@ router.post('/reward-transaction', async (req, res) => {
       if (!episodeCount) return res.status(400).json({ error: 'episodeCount is required for bundle paymentType' });
       // Example: 10 points per episode
       const points = episodeCount;
-      user.current_reward_balance += points;
-      await user.save();
-      transaction = await RewardTransaction.create({
-        user_id: user.id,
-        type: 'earn',
-        points,
-        created_at: new Date()
-      });
-      res.json({
-        Name: user.Name,
-        start_date: user.start_date,
-        end_date: user.end_date,
-        points: user.current_reward_balance,
-        login_type: user.login_type,
-        transaction
-      });
+              user.current_reward_balance += points;
+        await user.save();
+        transaction = await RewardTransaction.create({
+          user_id: user.id,
+          type: 'earn',
+          points,
+          created_at: new Date()
+        });
+        
+        // Invalidate user caches after reward transaction
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (deviceId) {
+            await apiCache.invalidateUserSession(deviceId);
+            await apiCache.invalidateUserProfileCache(deviceId);
+            console.log('🗑️ User caches invalidated due to reward transaction');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+        
+        res.json({
+          Name: user.Name,
+          start_date: user.start_date,
+          end_date: user.end_date,
+          points: user.current_reward_balance,
+          login_type: user.login_type,
+          transaction
+        });
     } else if (paymentType === 'monthly') {
       if (!startTime || !endTime) return res.status(400).json({ error: 'startTime and endTime are required for monthly paymentType' });
       const start = new Date(startTime);
       const end = new Date(endTime);
-      user.start_date = start;
-      user.end_date = end;
-      await user.save();
-      transaction = await RewardTransaction.create({
-        user_id: user.id,
-        type: 'spend',
-        points: 0,
-        created_at: new Date()
-      });
-      res.json({
-        Name: user.Name,
-        start_date: user.start_date,
-        end_date: user.end_date,
-        points: user.current_reward_balance,
-        login_type: user.login_type,
-        transaction
-      });
+              user.start_date = start;
+        user.end_date = end;
+        await user.save();
+        transaction = await RewardTransaction.create({
+          user_id: user.id,
+          type: 'spend',
+          points: 0,
+          created_at: new Date()
+        });
+        
+        // Invalidate user caches after monthly payment
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (deviceId) {
+            await apiCache.invalidateUserSession(deviceId);
+            await apiCache.invalidateUserProfileCache(deviceId);
+            console.log('🗑️ User caches invalidated due to monthly payment');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+        
+        res.json({
+          Name: user.Name,
+          start_date: user.start_date,
+          end_date: user.end_date,
+          points: user.current_reward_balance,
+          login_type: user.login_type,
+          transaction
+        });
     } else {
       return res.status(400).json({ error: 'Invalid paymentType' });
     }

@@ -27,6 +27,14 @@ router.get('/wishlist/series-episodes', async (req, res) => {
       return res.status(400).json({ error: 'Invalid user_id format' });
     }
 
+    // Try to get from cache first
+    const { apiCache } = await import('../config/redis.js');
+    const cachedWishlist = await apiCache.getWishlistSeriesCache(user_id);
+    if (cachedWishlist) {
+      console.log('📦 Wishlist data served from cache');
+      return res.json(cachedWishlist);
+    }
+
     // Fetch wishlist records for the user
     const wishlistRecords = await Wishlist.findAll({ where: { user_id } });
     if (!wishlistRecords || wishlistRecords.length === 0) {
@@ -41,10 +49,10 @@ router.get('/wishlist/series-episodes', async (req, res) => {
         // Fetch the series with all fields
         const series = await Series.findByPk(record.series_id, { raw: true });
         if (series && series.status === 'Active') {
-                  // Generate CDN signed URL for thumbnail_url directly
-        if (series.thumbnail_url) {
-          series.thumbnail_url = generateCdnSignedUrlForThumbnail(series.thumbnail_url);
-        }
+          // Generate CDN signed URL for thumbnail_url directly
+          if (series.thumbnail_url) {
+            series.thumbnail_url = generateCdnSignedUrlForThumbnail(series.thumbnail_url);
+          }
           // Fetch all episodes for the series
           const episodes = await Episode.findAll({
             where: { series_id: record.series_id },
@@ -62,8 +70,13 @@ router.get('/wishlist/series-episodes', async (req, res) => {
 
     // Convert map values to array
     const result = Array.from(seriesMap.values());
+    const wishlistData = { wishlist: result, user_id, cached_at: new Date().toISOString() };
 
-    res.json({ wishlist: result });
+    // Cache wishlist data for 2 hours
+    await apiCache.setWishlistSeriesCache(user_id, wishlistData);
+    console.log('💾 Wishlist data cached for 2 hours');
+
+    res.json(wishlistData);
   } catch (error) {
     if (error.name === 'SequelizeDatabaseError' && error.parent && error.parent.code === '22P02') {
       // Invalid UUID error from Postgres
@@ -78,11 +91,21 @@ router.get('/search', async (req, res) => {
   try {
     const { q } = req.query;
     if (!q) return res.status(400).json({ error: 'Query string q is required' });
+    
+    // Try to get from cache first
+    const { apiCache } = await import('../config/redis.js');
+    const cachedSearch = await apiCache.getSearchCache(q);
+    if (cachedSearch) {
+      console.log('📦 Search results served from cache');
+      return res.json(cachedSearch);
+    }
+    
     const seriesResults = await Series.findAll({
       where: { title: { [Op.iLike]: `%${q}%` } },
       include: [{ model: Episode }],
       limit: 10
     });
+    
     // Generate CDN signed URL for thumbnail_url in each series directly
     const seriesWithSignedUrl = await Promise.all(seriesResults.map(async series => {
       let obj = series.toJSON ? series.toJSON() : series;
@@ -91,7 +114,14 @@ router.get('/search', async (req, res) => {
       }
       return obj;
     }));
-    res.json({ series: seriesWithSignedUrl });
+    
+    const searchResults = { series: seriesWithSignedUrl, query: q, cached_at: new Date().toISOString() };
+    
+    // Cache search results for 2 hours
+    await apiCache.setSearchCache(q, searchResults);
+    console.log('💾 Search results cached for 2 hours');
+    
+    res.json(searchResults);
   } catch (error) {
     res.status(500).json({ error: error.message || 'Search failed' });
   }
@@ -193,6 +223,18 @@ router.get('/profile', async (req, res) => {
 
       await t.commit();
 
+      // Invalidate user caches after new user creation
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        if (deviceId) {
+          await apiCache.invalidateUserSession(deviceId);
+          await apiCache.invalidateUserProfileCache(deviceId);
+          console.log('🗑️ User caches invalidated due to new user creation');
+        }
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+
       return res.json({
         user: {
           id: user.id,
@@ -243,9 +285,24 @@ router.get('/profile', async (req, res) => {
 // GET /api/static/about-us
 router.get('/static/about-us', async (req, res) => {
   try {
+    // Try to get from cache first
+    const { apiCache } = await import('../config/redis.js');
+    const cachedAbout = await apiCache.getStaticContentCache('about_us');
+    if (cachedAbout) {
+      console.log('📦 About Us content served from cache');
+      return res.json(cachedAbout);
+    }
+    
     const about = await StaticContent.findOne({ where: { type: 'about_us' } });
     if (!about) return res.status(404).json({ error: 'About Us not found' });
-    res.json({ content: about.content });
+    
+    const aboutData = { content: about.content, cached_at: new Date().toISOString() };
+    
+    // Cache static content for 2 hours
+    await apiCache.setStaticContentCache('about_us', aboutData);
+    console.log('💾 About Us content cached for 2 hours');
+    
+    res.json(aboutData);
   } catch (error) {
     res.status(500).json({ error: error.message || 'Failed to get About Us' });
   }
@@ -254,9 +311,24 @@ router.get('/static/about-us', async (req, res) => {
 // GET /api/static/privacy-policy
 router.get('/static/privacy-policy', async (req, res) => {
   try {
+    // Try to get from cache first
+    const { apiCache } = await import('../config/redis.js');
+    const cachedPolicy = await apiCache.getStaticContentCache('privacy_policy');
+    if (cachedPolicy) {
+      console.log('📦 Privacy Policy content served from cache');
+      return res.json(cachedPolicy);
+    }
+    
     const policy = await StaticContent.findOne({ where: { type: 'privacy_policy' } });
     if (!policy) return res.status(404).json({ error: 'Privacy Policy not found' });
-    res.json({ content: policy.content });
+    
+    const policyData = { content: policy.content, cached_at: new Date().toISOString() };
+    
+    // Cache static content for 2 hours
+    await apiCache.setStaticContentCache('privacy_policy', policyData);
+    console.log('💾 Privacy Policy content cached for 2 hours');
+    
+    res.json(policyData);
   } catch (error) {
     res.status(500).json({ error: error.message || 'Failed to get Privacy Policy' });
   }
@@ -294,9 +366,24 @@ router.post('/episode/access', async (req, res) => {
   // If only series_id is provided, return all access records for that series
   if (series_id && !episode_id && user_id) {
     try {
+      // Try to get from cache first
+      const { apiCache } = await import('../config/redis.js');
+      const cachedAccess = await apiCache.getEpisodeAccessCache(user_id, series_id);
+      if (cachedAccess) {
+        console.log('📦 Episode access data served from cache');
+        return res.json(cachedAccess);
+      }
+      
       const { EpisodeUserAccess } = models;
       const records = await EpisodeUserAccess.findAll({ where: { series_id,user_id } });
-      return res.json({ records });
+      
+      const accessData = { records, user_id, series_id, cached_at: new Date().toISOString() };
+      
+      // Cache episode access data for 2 hours
+      await apiCache.setEpisodeAccessCache(user_id, series_id, accessData);
+      console.log('💾 Episode access data cached for 2 hours');
+      
+      return res.json(accessData);
     } catch (error) {
       console.error('Episode access fetch error:', error);
       return res.status(500).json({ error: 'Internal server error' });
@@ -322,6 +409,15 @@ router.post('/episode/access', async (req, res) => {
         access.updated_at = new Date();
         await access.save();
       }
+      // Invalidate episode access cache
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.invalidateEpisodeAccessCache(user_id, series_id);
+        console.log('🗑️ Episode access cache invalidated due to access change');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+      
       return res.json({ message: `Access ${lock ? 'locked' : 'unlocked'}`, access });
     }
     // Otherwise, check existing access
@@ -338,6 +434,16 @@ router.post('/episode/access', async (req, res) => {
         access.is_locked = false;
         access.updated_at = new Date();
         await access.save();
+        
+        // Invalidate episode access cache
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.invalidateEpisodeAccessCache(user_id, series_id);
+          console.log('🗑️ Episode access cache invalidated due to unlock with points');
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+        
         return res.json({ message: 'Unlocked using points', access });
       } else {
         return res.json({ message: 'Locked, not enough points', access });
@@ -357,6 +463,16 @@ router.post('/episode/access', async (req, res) => {
           created_at: new Date(),
           updated_at: new Date()
         });
+        
+        // Invalidate episode access cache
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.invalidateEpisodeAccessCache(user_id, series_id);
+          console.log('🗑️ Episode access cache invalidated due to new access creation');
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+        
         return res.json({ message: 'Unlocked using points', access });
       } else {
        access=[];
@@ -429,6 +545,30 @@ router.post('/action', userContext, async (req, res) => {
       // Deduplicate like/subscribe
       [record] = await Model.findOrCreate({ where, defaults: { created_at: new Date(), updated_at: new Date() } });
     }
+    
+    // Invalidate relevant caches when action is performed
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      
+      if (series_id) {
+        // Invalidate series-related caches
+        await apiCache.invalidateAllSeriesCaches(series_id);
+        console.log('🗑️ Series caches invalidated due to action:', action);
+      }
+      
+      if (user_id) {
+        // Invalidate user-related caches
+        const user = await models.User.findByPk(user_id);
+        if (user && user.device_id) {
+          await apiCache.invalidateAllUserCaches(user_id, user.device_id);
+          console.log('🗑️ User caches invalidated due to action:', action);
+        }
+      }
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+      // Continue with response even if cache invalidation fails
+    }
+    
     res.json({ success: true, action, record });
   } catch (error) {
     res.status(500).json({ error: error.message || 'Failed to process action' });

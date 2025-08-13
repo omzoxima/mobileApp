@@ -41,6 +41,14 @@ router.get('/reward_task', async (req, res) => {
     }
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
+    // Try to get reward tasks from cache first
+    const { apiCache } = await import('../config/redis.js');
+    const cachedTasks = await apiCache.getRewardTasksCache();
+    if (cachedTasks) {
+      console.log('📦 Reward tasks served from cache');
+      return res.json(cachedTasks);
+    }
+
     // Get all active reward tasks
     const tasks = await RewardTask.findAll({ where: { is_active: true } });
 
@@ -85,10 +93,19 @@ router.get('/reward_task', async (req, res) => {
       ...Array.from(claimedIds),
       ...completedStreakTaskIds
     ]));
-    res.json({
+    
+    const responseData = {
       tasks: result,
-      completed_streak_task_ids: allCompletedTaskIds
-    });
+      completed_streak_task_ids: allCompletedTaskIds,
+      user_id: user.id,
+      cached_at: new Date().toISOString()
+    };
+    
+    // Cache reward tasks for 2 hours
+    await apiCache.setRewardTasksCache(responseData);
+    console.log('💾 Reward tasks cached for 2 hours');
+    
+    res.json(responseData);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -142,6 +159,24 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
       created_at: new Date(),
       updated_at: new Date()
     });
+
+    // Invalidate relevant caches
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      
+      // Invalidate reward tasks cache
+      await apiCache.invalidateRewardTasksCache();
+      
+      // Invalidate user session cache if device_id is available
+      if (req.guestDeviceId) {
+        await apiCache.invalidateUserSession(req.guestDeviceId);
+        await apiCache.invalidateUserTransactionsCache(req.guestDeviceId);
+      }
+      
+      console.log('🗑️ Caches invalidated due to reward task completion');
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+    }
 
     res.status(201).json({ message: 'Task completed, points awarded', transaction, new_balance });
   } catch (error) {
@@ -263,6 +298,26 @@ router.post('/streak/episode-watched', async (req, res) => {
     }
     // --- End daily watch reward logic ---
 
+    // Invalidate relevant caches
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      
+      // Invalidate user session cache
+      if (device_id) {
+        await apiCache.invalidateUserSession(device_id);
+        await apiCache.invalidateUserTransactionsCache(device_id);
+      }
+      
+      // Invalidate reward tasks cache if points were awarded
+      if (awardedPoints > 0 || dailyWatchPointAwarded) {
+        await apiCache.invalidateRewardTasksCache();
+      }
+      
+      console.log('🗑️ Caches invalidated due to streak update');
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+    }
+
     res.json({
       user_id: user.id,
       current_streak: user.current_streak,
@@ -288,6 +343,15 @@ router.get('/user-transaction', async (req, res) => {
     if (!deviceId) {
       return res.status(400).json({ error: 'x-device-id header is required' });
     }
+    
+    // Try to get from cache first
+    const { apiCache } = await import('../config/redis.js');
+    const cachedTransactions = await apiCache.getUserTransactionsCache(deviceId);
+    if (cachedTransactions) {
+      console.log('📦 User transactions served from cache');
+      return res.json(cachedTransactions);
+    }
+    
     const user = await User.findOne({ where: { device_id: deviceId } });
     if (!user) {
       return res.status(404).json({ error: 'User not found for provided device_id' });
@@ -366,10 +430,18 @@ router.get('/user-transaction', async (req, res) => {
       };
     });
 
-    res.json({
+    const transactionData = {
       transactions: transactionsWithTask,
-      episode_access: episodeAccess
-    });
+      episode_access: episodeAccess,
+      user_id: user.id,
+      cached_at: new Date().toISOString()
+    };
+    
+    // Cache user transactions for 2 hours
+    await apiCache.setUserTransactionsCache(deviceId, transactionData);
+    console.log('💾 User transactions cached for 2 hours');
+
+    res.json(transactionData);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -442,6 +514,24 @@ router.post('/ad-reward', async (req, res) => {
       await AdReward.destroy({
         where: { user_id: user.id }
       });
+
+      // Invalidate relevant caches
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        
+        // Invalidate episode access cache
+        await apiCache.invalidateEpisodeAccessCache(user.id, series_id);
+        
+        // Invalidate user session cache if device_id is available
+        if (deviceId) {
+          await apiCache.invalidateUserSession(deviceId);
+          await apiCache.invalidateUserTransactionsCache(deviceId);
+        }
+        
+        console.log('🗑️ Caches invalidated due to ad reward episode access');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
 
       return res.json({
         success: true,

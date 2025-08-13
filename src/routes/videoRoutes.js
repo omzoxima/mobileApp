@@ -25,14 +25,34 @@ router.get('/series', async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
     
-    // Try to get from cache first
-    const cachedData = await apiCache.getSeriesCache(page, limit, category);
+    // Try to get from cache first with URL refresh check
+    const cachedData = await apiCache.getSeriesCacheWithUrlRefresh(page, limit, category);
     
-    if (cachedData) {
-      console.log('📦 Series data served from cache');
+    if (cachedData && !cachedData._needsUrlRefresh) {
+      console.log('📦 Series data served from cache (fresh URLs)');
       return res.json(cachedData);
     }
     
+    // If cached data needs URL refresh, serve it immediately and refresh in background
+    if (cachedData && cachedData._needsUrlRefresh) {
+      console.log('📦 Series data served from cache (URLs being refreshed in background)');
+      
+      // Start background URL refresh process
+      setImmediate(async () => {
+        try {
+          await refreshSeriesUrlsInCache(page, limit, category);
+          console.log('✅ Series URLs refreshed in background');
+        } catch (error) {
+          console.error('❌ Background URL refresh failed:', error);
+        }
+      });
+      
+      // Remove the refresh flag before sending response
+      const { _needsUrlRefresh, ...cleanData } = cachedData;
+      return res.json(cleanData);
+    }
+    
+    // No cache or expired cache - fetch from database
     const where = {};
     if (category) where.category_id = category;
     where.status = 'Active';
@@ -66,12 +86,13 @@ router.get('/series', async (req, res) => {
       total: count, 
       series: seriesWithPoster,
       cached_at: new Date().toISOString(),
-      signed_urls_generated: true
+      signed_urls_generated: true,
+      urls_expire_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
     };
     
     // Cache the response with signed URLs for 2 hours
     await apiCache.setSeriesCache(page, limit, category, responseData);
-    console.log('💾 Series data with signed URLs cached for 2 hours');
+    console.log('💾 Series data with fresh signed URLs cached for 2 hours');
     
     res.json(responseData);
   } catch (error) {
@@ -79,6 +100,56 @@ router.get('/series', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Helper function to refresh URLs in cache
+async function refreshSeriesUrlsInCache(page, limit, category) {
+  try {
+    const where = {};
+    if (category) where.category_id = category;
+    where.status = 'Active';
+    
+    const { count, rows } = await Series.findAndCountAll({
+      where,
+      offset: (page - 1) * limit,
+      limit: parseInt(limit),
+      include: [{ model: Category }],
+      order: [['created_at', 'DESC']]
+    });
+    
+    // Regenerate signed URLs
+    const seriesWithFreshUrls = await Promise.all(rows.map(async series => {
+      let thumbnail_url = series.thumbnail_url;
+      let carousel_image_url = series.carousel_image_url;
+      
+      if (thumbnail_url) {
+        thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
+      }
+      
+      if (carousel_image_url) {
+        carousel_image_url = generateCdnSignedUrlForThumbnail(carousel_image_url);
+      }
+      
+      return { ...series.toJSON(), thumbnail_url, carousel_image_url };
+    }));
+    
+    const refreshedData = { 
+      total: count, 
+      series: seriesWithFreshUrls,
+      cached_at: new Date().toISOString(),
+      signed_urls_generated: true,
+      urls_expire_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      urls_refreshed_at: new Date().toISOString()
+    };
+    
+    // Update cache with fresh URLs
+    await apiCache.setSeriesCache(page, limit, category, refreshedData);
+    console.log('🔄 Series cache updated with fresh URLs');
+    
+  } catch (error) {
+    console.error('Error refreshing series URLs:', error);
+    throw error;
+  }
+}
 
 // GET /api/series/:seriesId/episodes
 router.get('/series/:seriesId/episodes', async (req, res) => {
@@ -174,15 +245,30 @@ router.get('/series/:seriesId/episodes', async (req, res) => {
 // GET /api/episodes/:id
 router.get('/episodes/:id', async (req, res) => {
   try {
-    const episode = await Episode.findByPk(req.params.id, {
+    const episodeId = req.params.id;
+    
+    // Try to get from cache first
+    const cachedEpisode = await apiCache.getEpisodeCache(episodeId);
+    if (cachedEpisode) {
+      console.log('📦 Episode data served from cache');
+      return res.json(cachedEpisode);
+    }
+    
+    const episode = await Episode.findByPk(episodeId, {
       include: [{ model: Series, include: [Category] }]
     });
     if (!episode) return res.status(404).json({ error: 'Episode not found' });
+    
     // If episode includes Series, generate CDN signed URL for its thumbnail
     let episodeObj = episode.toJSON();
     if (episodeObj.Series && episodeObj.Series.thumbnail_url) {
       episodeObj.Series.thumbnail_url = generateCdnSignedUrlForThumbnail(episodeObj.Series.thumbnail_url);
     }
+    
+    // Cache the episode data for 2 hours
+    await apiCache.setEpisodeCache(episodeId, episodeObj);
+    console.log('💾 Episode data cached for 2 hours');
+    
     res.json(episodeObj);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -459,21 +545,28 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
 // Cache management routes (for admin use)
 router.post('/cache/invalidate', async (req, res) => {
   try {
-    const { type, userId, seriesId, deviceId } = req.body;
+    const { type, userId, seriesId, deviceId, episodeId } = req.body;
     
     switch (type) {
       case 'series':
-        await apiCache.invalidateSeriesCache();
-        console.log('🗑️ Series cache invalidated');
+        if (seriesId) {
+          await apiCache.invalidateAllSeriesCaches(seriesId);
+          console.log(`🗑️ All series-related caches invalidated for series: ${seriesId}`);
+        } else {
+          await apiCache.invalidateSeriesCache();
+          console.log('🗑️ Series cache invalidated');
+        }
         break;
       case 'wishlist':
         if (userId) {
           await apiCache.invalidateUserWishlistCache(userId);
-          console.log(`🗑️ Wishlist cache invalidated for user: ${userId}`);
+          await apiCache.invalidateWishlistSeriesCache(userId);
+          console.log(`🗑️ Wishlist caches invalidated for user: ${userId}`);
         } else {
           // Invalidate all wishlist caches
-          const keys = await apiCache.keys('wishlist:*');
-          for (const key of keys) {
+          const wishlistKeys = await apiCache.keys('wishlist:*');
+          const wishlistSeriesKeys = await apiCache.keys('wishlist_series:*');
+          for (const key of [...wishlistKeys, ...wishlistSeriesKeys]) {
             await apiCache.del(key);
           }
           console.log('🗑️ All wishlist caches invalidated');
@@ -483,6 +576,18 @@ router.post('/cache/invalidate', async (req, res) => {
         await apiCache.invalidateBundleCache();
         console.log('🗑️ Bundle cache invalidated');
         break;
+      case 'episodes':
+        if (episodeId) {
+          await apiCache.invalidateEpisodeCache(episodeId);
+          console.log(`🗑️ Episode cache invalidated for episode: ${episodeId}`);
+        } else {
+          const episodeKeys = await apiCache.keys('episode:*');
+          for (const key of episodeKeys) {
+            await apiCache.del(key);
+          }
+          console.log('🗑️ All episode caches invalidated');
+        }
+        break;
       case 'user_session':
         if (deviceId) {
           await apiCache.invalidateUserSession(deviceId);
@@ -491,19 +596,67 @@ router.post('/cache/invalidate', async (req, res) => {
           console.log('⚠️ Device ID required for user session invalidation');
         }
         break;
-      case 'thumbnails':
-        console.log('ℹ️ Thumbnail URLs are cached with series data - invalidate series cache instead');
+      case 'user_profile':
+        if (deviceId) {
+          await apiCache.invalidateUserProfileCache(deviceId);
+          console.log(`🗑️ User profile cache invalidated for device: ${deviceId}`);
+        } else {
+          console.log('⚠️ Device ID required for user profile invalidation');
+        }
         break;
-      case 'carousel':
-        console.log('ℹ️ Carousel URLs are cached with series data - invalidate series cache instead');
+      case 'user_transactions':
+        if (deviceId) {
+          await apiCache.invalidateUserTransactionsCache(deviceId);
+          console.log(`🗑️ User transactions cache invalidated for device: ${deviceId}`);
+        } else {
+          console.log('⚠️ Device ID required for user transactions invalidation');
+        }
+        break;
+      case 'episode_access':
+        if (userId && seriesId) {
+          await apiCache.invalidateEpisodeAccessCache(userId, seriesId);
+          console.log(`🗑️ Episode access cache invalidated for user: ${userId}, series: ${seriesId}`);
+        } else {
+          console.log('⚠️ User ID and Series ID required for episode access invalidation');
+        }
+        break;
+      case 'search':
+        await apiCache.invalidateSearchCache();
+        console.log('🗑️ Search cache invalidated');
+        break;
+      case 'static_content':
+        const contentType = req.body.contentType || 'all';
+        if (contentType === 'all') {
+          const staticKeys = await apiCache.keys('static:*');
+          for (const key of staticKeys) {
+            await apiCache.del(key);
+          }
+          console.log('🗑️ All static content caches invalidated');
+        } else {
+          await apiCache.invalidateStaticContentCache(contentType);
+          console.log(`🗑️ Static content cache invalidated for type: ${contentType}`);
+        }
+        break;
+      case 'reward_tasks':
+        await apiCache.invalidateRewardTasksCache();
+        console.log('🗑️ Reward tasks cache invalidated');
+        break;
+      case 'user_all':
+        if (userId && deviceId) {
+          await apiCache.invalidateAllUserCaches(userId, deviceId);
+          console.log(`🗑️ All user-related caches invalidated for user: ${userId}, device: ${deviceId}`);
+        } else {
+          console.log('⚠️ User ID and Device ID required for complete user cache invalidation');
+        }
         break;
       case 'all':
         await apiCache.invalidateSeriesCache();
         await apiCache.invalidateBundleCache();
-        const wishlistKeys = await apiCache.keys('wishlist:*');
-        const sessionKeys = await apiCache.keys('session:*');
+        await apiCache.invalidateSearchCache();
+        await apiCache.invalidateRewardTasksCache();
         
-        for (const key of [...wishlistKeys, ...sessionKeys]) {
+        const allKeys = await apiCache.keys('*');
+        for (const key of allKeys) {
           await apiCache.del(key);
         }
         console.log('🗑️ All caches invalidated');
@@ -594,9 +747,26 @@ router.post('/cache/warm', async (req, res) => {
       case 'bundles':
         await apiCache.warmBundleCache();
         break;
+      case 'episodes':
+        console.log('🔥 Warming episode caches...');
+        // Episode caches are warmed when individual episodes are accessed
+        break;
+      case 'search':
+        console.log('🔥 Warming search caches...');
+        // Search caches are warmed when searches are performed
+        break;
+      case 'static':
+        console.log('🔥 Warming static content caches...');
+        // Static content caches are warmed when content is accessed
+        break;
+      case 'reward_tasks':
+        console.log('🔥 Warming reward tasks caches...');
+        // Reward tasks caches are warmed when tasks are accessed
+        break;
       case 'all':
         await apiCache.warmSeriesCache();
         await apiCache.warmBundleCache();
+        console.log('🔥 Warming all cache types...');
         break;
       default:
         return res.status(400).json({ error: 'Invalid cache type' });
@@ -608,5 +778,80 @@ router.post('/cache/warm', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// POST /api/video/cache/refresh-urls - Refresh expired URLs in cache
+router.post('/cache/refresh-urls', async (req, res) => {
+  try {
+    const { type, page, limit, category } = req.body;
+    
+    switch (type) {
+      case 'series':
+        if (page && limit) {
+          await refreshSeriesUrlsInCache(page, limit, category);
+          console.log('🔄 Series URLs refreshed for page:', page, 'limit:', limit);
+        } else {
+          // Refresh all series caches
+          const seriesKeys = await apiCache.keys('series:*');
+          for (const key of seriesKeys) {
+            // Extract page, limit, category from key
+            const keyParts = key.split(':');
+            if (keyParts.length >= 3) {
+              const pageNum = parseInt(keyParts[1]) || 1;
+              const limitNum = parseInt(keyParts[2]) || 10;
+              const cat = keyParts[3] || null;
+              await refreshSeriesUrlsInCache(pageNum, limitNum, cat);
+            }
+          }
+          console.log('🔄 All series URLs refreshed');
+        }
+        break;
+      case 'all':
+        // Refresh all URL-based caches
+        await refreshAllUrlCaches();
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid refresh type. Use: series, all' });
+    }
+    
+    res.json({ success: true, message: `${type} URLs refreshed successfully` });
+  } catch (error) {
+    console.error('URL refresh error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Helper function to refresh all URL caches
+async function refreshAllUrlCaches() {
+  try {
+    // Refresh series caches
+    const seriesKeys = await apiCache.keys('series:*');
+    for (const key of seriesKeys) {
+      const keyParts = key.split(':');
+      if (keyParts.length >= 3) {
+        const pageNum = parseInt(keyParts[1]) || 1;
+        const limitNum = parseInt(keyParts[2]) || 10;
+        const cat = keyParts[3] || null;
+        await refreshSeriesUrlsInCache(pageNum, limitNum, cat);
+      }
+    }
+    
+    // Refresh search caches
+    const searchKeys = await apiCache.keys('search:*');
+    for (const key of searchKeys) {
+      await apiCache.invalidateSearchCache();
+    }
+    
+    // Refresh wishlist caches
+    const wishlistKeys = await apiCache.keys('wishlist_series:*');
+    for (const key of wishlistKeys) {
+      await apiCache.del(key);
+    }
+    
+    console.log('🔄 All URL caches refreshed');
+  } catch (error) {
+    console.error('Error refreshing all URL caches:', error);
+    throw error;
+  }
+}
 
 export default router;

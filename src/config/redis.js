@@ -250,6 +250,63 @@ export const apiCache = {
     return await redisUtils.setex(key, apiCache.TTL.SERIES, data);
   },
 
+  // Series cache with URL refresh capability
+  async getSeriesCacheWithUrlRefresh(page, limit, category) {
+    const key = `series:${page}:${limit}:${category || 'all'}`;
+    const cachedData = await redisUtils.get(key);
+    
+    if (cachedData) {
+      // Check if URLs need refresh (expired or about to expire)
+      const needsRefresh = this.checkUrlsNeedRefresh(cachedData);
+      if (needsRefresh) {
+        console.log('🔄 URLs need refresh, regenerating signed URLs');
+        // Return cached data but mark for background refresh
+        return { ...cachedData, _needsUrlRefresh: true };
+      }
+      return cachedData;
+    }
+    return null;
+  },
+
+  // Check if URLs in cached data need refresh
+  checkUrlsNeedRefresh(cachedData) {
+    if (!cachedData || !cachedData.series) return false;
+    
+    const now = Date.now();
+    const urlExpiryBuffer = 5 * 60 * 1000; // 5 minutes buffer
+    
+    for (const series of cachedData.series) {
+      if (series.thumbnail_url || series.carousel_image_url) {
+        // Check if URLs are about to expire (within 5 minutes)
+        if (this.isUrlExpiringSoon(series.thumbnail_url, urlExpiryBuffer) ||
+            this.isUrlExpiringSoon(series.carousel_image_url, urlExpiryBuffer)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  },
+
+  // Check if a URL is expiring soon
+  isUrlExpiringSoon(url, bufferMs) {
+    if (!url) return false;
+    
+    try {
+      // Extract expiry from signed URL
+      const urlObj = new URL(url);
+      const expiresParam = urlObj.searchParams.get('Expires');
+      
+      if (expiresParam) {
+        const expiryTime = parseInt(expiresParam) * 1000; // Convert to milliseconds
+        const timeUntilExpiry = expiryTime - Date.now();
+        return timeUntilExpiry <= bufferMs;
+      }
+    } catch (error) {
+      console.error('Error parsing URL expiry:', error);
+    }
+    return false;
+  },
+
   async invalidateSeriesCache() {
     const keys = await redisUtils.keys('series:*');
     for (const key of keys) {
@@ -323,6 +380,177 @@ export const apiCache = {
   // Note: Thumbnail and carousel URLs are now generated once and cached with series data
   // No separate caching needed since they're part of the series cache (2 hours)
 
+  // Episode caching (with immediate invalidation for updates)
+  async getEpisodeCache(episodeId) {
+    const key = `episode:${episodeId}`;
+    return await redisUtils.get(key);
+  },
+
+  async setEpisodeCache(episodeId, data) {
+    const key = `episode:${episodeId}`;
+    return await redisUtils.setex(key, apiCache.TTL.EPISODES, data);
+  },
+
+  async invalidateEpisodeCache(episodeId) {
+    const key = `episode:${episodeId}`;
+    return await redisUtils.del(key);
+  },
+
+  // User profile caching
+  async getUserProfileCache(deviceId) {
+    const key = `profile:${deviceId}`;
+    return await redisUtils.get(key);
+  },
+
+  async setUserProfileCache(deviceId, data) {
+    const key = `profile:${deviceId}`;
+    return await redisUtils.setex(key, apiCache.TTL.USER_SESSIONS, data);
+  },
+
+  async invalidateUserProfileCache(deviceId) {
+    const key = `profile:${deviceId}`;
+    return await redisUtils.del(key);
+  },
+
+  // Search results caching
+  async getSearchCache(query) {
+    const key = `search:${Buffer.from(query).toString('base64')}`;
+    return await redisUtils.get(key);
+  },
+
+  async setSearchCache(query, data) {
+    const key = `search:${Buffer.from(query).toString('base64')}`;
+    return await redisUtils.setex(key, apiCache.TTL.SERIES, data);
+  },
+
+  async invalidateSearchCache() {
+    const keys = await redisUtils.keys('search:*');
+    for (const key of keys) {
+      await redisUtils.del(key);
+    }
+  },
+
+  // Wishlist series episodes caching
+  async getWishlistSeriesCache(userId) {
+    const key = `wishlist_series:${userId}`;
+    return await redisUtils.get(key);
+  },
+
+  async setWishlistSeriesCache(userId, data) {
+    const key = `wishlist_series:${userId}`;
+    return await redisUtils.setex(key, apiCache.TTL.WISHLIST, data);
+  },
+
+  async invalidateWishlistSeriesCache(userId) {
+    const key = `wishlist_series:${userId}`;
+    return await redisUtils.del(key);
+  },
+
+  // Static content caching
+  async getStaticContentCache(type) {
+    const key = `static:${type}`;
+    return await redisUtils.get(key);
+  },
+
+  async setStaticContentCache(type, data) {
+    const key = `static:${type}`;
+    return await redisUtils.setex(key, apiCache.TTL.SERIES, data);
+  },
+
+  async invalidateStaticContentCache(type) {
+    const key = `static:${type}`;
+    return await redisUtils.del(key);
+  },
+
+  // Reward tasks caching
+  async getRewardTasksCache() {
+    const key = 'reward_tasks:all';
+    return await redisUtils.get(key);
+  },
+
+  async setRewardTasksCache(data) {
+    const key = 'reward_tasks:all';
+    return await redisUtils.setex(key, apiCache.TTL.WISHLIST, data);
+  },
+
+  async invalidateRewardTasksCache() {
+    const key = 'reward_tasks:all';
+    return await redisUtils.del(key);
+  },
+
+  // User transactions caching
+  async getUserTransactionsCache(deviceId) {
+    const key = `transactions:${deviceId}`;
+    return await redisUtils.get(key);
+  },
+
+  async setUserTransactionsCache(deviceId, data) {
+    const key = `transactions:${deviceId}`;
+    return await redisUtils.setex(key, apiCache.TTL.USER_SESSIONS, data);
+  },
+
+  async invalidateUserTransactionsCache(deviceId) {
+    const key = `transactions:${deviceId}`;
+    return await redisUtils.del(key);
+  },
+
+  // Episode access caching
+  async getEpisodeAccessCache(userId, seriesId) {
+    const key = `access:${userId}:${seriesId}`;
+    return await redisUtils.get(key);
+  },
+
+  async setEpisodeAccessCache(userId, seriesId, data) {
+    const key = `access:${userId}:${seriesId}`;
+    return await redisUtils.setex(key, apiCache.TTL.USER_SESSIONS, data);
+  },
+
+  async invalidateEpisodeAccessCache(userId, seriesId) {
+    const key = `access:${userId}:${seriesId}`;
+    return await redisUtils.del(key);
+  },
+
+  // Invalidate all user-related caches when user data changes
+  async invalidateAllUserCaches(userId, deviceId) {
+    // Invalidate user session
+    if (deviceId) {
+      await this.invalidateUserSession(deviceId);
+      await this.invalidateUserProfileCache(deviceId);
+      await this.invalidateUserTransactionsCache(deviceId);
+    }
+    
+    // Invalidate wishlist caches
+    await this.invalidateUserWishlistCache(userId);
+    await this.invalidateWishlistSeriesCache(userId);
+    
+    // Invalidate episode access caches for this user
+    const accessKeys = await redisUtils.keys(`access:${userId}:*`);
+    for (const key of accessKeys) {
+      await redisUtils.del(key);
+    }
+  },
+
+  // Invalidate all series-related caches when series data changes
+  async invalidateAllSeriesCaches(seriesId) {
+    // Invalidate series cache
+    await this.invalidateSeriesCache();
+    
+    // Invalidate episodes cache for this series
+    const episodeKeys = await redisUtils.keys(`episode:*`);
+    for (const key of episodeKeys) {
+      await redisUtils.del(key);
+    }
+    
+    // Invalidate search cache
+    await this.invalidateSearchCache();
+    
+    // Invalidate wishlist caches that might contain this series
+    const wishlistKeys = await redisUtils.keys('wishlist:*');
+    for (const key of wishlistKeys) {
+      await redisUtils.del(key);
+    }
+  },
+
   // Cache warming utilities
   async warmSeriesCache() {
     try {
@@ -337,6 +565,64 @@ export const apiCache = {
       console.log('🔥 Warming bundle cache...');
     } catch (error) {
       console.error('Cache warming error:', error);
+    }
+  },
+
+  // Scheduled URL refresh utilities
+  async scheduleUrlRefresh() {
+    try {
+      // Check for URLs that need refresh every 30 minutes
+      setInterval(async () => {
+        await this.refreshExpiringUrls();
+      }, 30 * 60 * 1000); // 30 minutes
+      
+      console.log('⏰ URL refresh scheduler started (every 30 minutes)');
+    } catch (error) {
+      console.error('URL refresh scheduler error:', error);
+    }
+  },
+
+  async refreshExpiringUrls() {
+    try {
+      console.log('🔄 Checking for URLs that need refresh...');
+      
+      // Get all series cache keys
+      const seriesKeys = await redisUtils.keys('series:*');
+      let refreshedCount = 0;
+      
+      for (const key of seriesKeys) {
+        const cachedData = await redisUtils.get(key);
+        if (cachedData && this.checkUrlsNeedRefresh(cachedData)) {
+          // Extract parameters from key
+          const keyParts = key.split(':');
+          if (keyParts.length >= 3) {
+            const page = parseInt(keyParts[1]) || 1;
+            const limit = parseInt(keyParts[2]) || 10;
+            const category = keyParts[3] || null;
+            
+            // Trigger background refresh
+            setImmediate(async () => {
+              try {
+                // Import the refresh function dynamically
+                const { refreshSeriesUrlsInCache } = await import('../routes/videoRoutes.js');
+                await refreshSeriesUrlsInCache(page, limit, category);
+                console.log(`✅ Scheduled refresh completed for ${key}`);
+              } catch (error) {
+                console.error(`❌ Scheduled refresh failed for ${key}:`, error);
+              }
+            });
+            
+            refreshedCount++;
+          }
+        }
+      }
+      
+      if (refreshedCount > 0) {
+        console.log(`🔄 Scheduled refresh initiated for ${refreshedCount} cache entries`);
+      }
+      
+    } catch (error) {
+      console.error('Scheduled URL refresh error:', error);
     }
   }
 };

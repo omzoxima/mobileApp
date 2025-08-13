@@ -311,6 +311,18 @@ router.post('/verify-otp', async (req, res) => {
         }
       }
     }
+    
+    // Invalidate user caches after OTP verification
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      if (deviceId) {
+        await apiCache.invalidateUserSession(deviceId);
+        await apiCache.invalidateUserProfileCache(deviceId);
+        console.log('🗑️ User caches invalidated due to OTP verification');
+      }
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+    }
   
     res.json({
       success: true,

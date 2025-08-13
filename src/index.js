@@ -40,15 +40,25 @@ Promise.all([
     return redisModule.checkRedisHealth();
   })
 ])
-.then(([dbResult, redisResult]) => {
+.then(async ([dbResult, redisResult]) => {
   console.log('✅ Database connection established successfully');
   console.log('✅ Redis connection established successfully');
   console.log('🌐 Both services are on VPC network - optimal performance');
+  
+  // Start URL refresh scheduler
+  try {
+    const redisModule = await import('./config/redis.js');
+    await redisModule.apiCache.scheduleUrlRefresh();
+    console.log('⏰ URL refresh scheduler started');
+  } catch (error) {
+    console.error('❌ Failed to start URL refresh scheduler:', error);
+  }
   
   app.listen(PORT, () => {
     console.log(`🚀 Server is running on port ${PORT}`);
     console.log('📊 Database and Redis connected and ready');
     console.log('⚡ Optimized caching system active (2-hour TTL)');
+    console.log('🔄 Automatic URL refresh active (every 30 minutes)');
   });
 })
 .catch(err => {
