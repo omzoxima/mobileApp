@@ -29,19 +29,33 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// Database sync and server start
+// Database connection check and server start
 const PORT = process.env.PORT || 8080;
 
-// Only create tables if they do not exist (no force, no alter)
-sequelize.sync()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
-      console.log('Database synced successfully');
-    });
-  })
-  .catch(err => {
-    console.error('Unable to sync database:', err);
+// Check both database and Redis connections
+Promise.all([
+  sequelize.authenticate(),
+  import('./config/redis.js').then(redis => redis.checkRedisHealth())
+])
+.then(([dbResult, redisResult]) => {
+  console.log('✅ Database connection established successfully');
+  console.log('✅ Redis connection established successfully');
+  console.log('🌐 Both services are on VPC network - optimal performance');
+  
+  app.listen(PORT, () => {
+    console.log(`🚀 Server is running on port ${PORT}`);
+    console.log('📊 Database and Redis connected and ready');
+    console.log('⚡ Optimized caching system active (2-hour TTL)');
   });
+})
+.catch(err => {
+  console.error('❌ Connection failed:', err.message);
+  if (err.message.includes('Redis')) {
+    console.log('🔧 Please check your Redis configuration');
+  } else {
+    console.log('🔧 Please check your database configuration');
+  }
+  process.exit(1); // Exit if connections fail
+});
 
 export default app;

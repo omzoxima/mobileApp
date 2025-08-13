@@ -41,10 +41,10 @@ router.get('/wishlist/series-episodes', async (req, res) => {
         // Fetch the series with all fields
         const series = await Series.findByPk(record.series_id, { raw: true });
         if (series && series.status === 'Active') {
-          // Generate CDN signed URL for thumbnail_url
-          if (series.thumbnail_url) {
-            series.thumbnail_url = generateCdnSignedUrlForThumbnail(series.thumbnail_url);
-          }
+                  // Generate CDN signed URL for thumbnail_url directly
+        if (series.thumbnail_url) {
+          series.thumbnail_url = generateCdnSignedUrlForThumbnail(series.thumbnail_url);
+        }
           // Fetch all episodes for the series
           const episodes = await Episode.findAll({
             where: { series_id: record.series_id },
@@ -83,7 +83,7 @@ router.get('/search', async (req, res) => {
       include: [{ model: Episode }],
       limit: 10
     });
-    // Generate CDN signed URL for thumbnail_url in each series
+    // Generate CDN signed URL for thumbnail_url in each series directly
     const seriesWithSignedUrl = await Promise.all(seriesResults.map(async series => {
       let obj = series.toJSON ? series.toJSON() : series;
       if (obj.thumbnail_url) {
@@ -103,7 +103,7 @@ router.get('/profile', async (req, res) => {
   let t; // Declare transaction outside try block
   
   try {
-    // Initial user fetching without transaction
+    // Initial user fetching with Redis caching
     let user = null;
     const deviceId = req.headers['x-device-id'];
     const authHeader = req.headers['authorization'];
@@ -115,10 +115,26 @@ router.get('/profile', async (req, res) => {
         attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
       });
     } else if (deviceId) {
-      user = await User.findOne({
-        where: { device_id: deviceId },
-        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
-      });
+      // Try to get user session from cache first
+      const { apiCache } = await import('../config/redis.js');
+      let userSession = await apiCache.getUserSession(deviceId);
+      
+      if (userSession) {
+        user = userSession;
+        console.log('👤 Profile: User session served from cache');
+      } else {
+        // Fetch user from database
+        user = await User.findOne({
+          where: { device_id: deviceId },
+          attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
+        });
+        
+        if (user) {
+          // Cache user session for 2 hours
+          await apiCache.setUserSession(deviceId, user);
+          console.log('💾 Profile: User session cached for 2 hours');
+        }
+      }
     }
     
     if (!user) {

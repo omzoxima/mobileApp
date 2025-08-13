@@ -2,22 +2,14 @@ import express from 'express';
 import models from '../models/index.js';
 import crypto from 'crypto';
 import { Storage } from '@google-cloud/storage';
-//import ffmpeg from 'fluent-ffmpeg';
-import fs from 'fs';
-import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+
 import { promisify } from 'util';
 import stream from 'stream';
 import { generateCdnSignedUrlForThumbnail,generateCdnSignedCookie } from '../services/cdnService.js';
+import { apiCache } from '../config/redis.js';
 // POST /api/video/process-hls-cdn - Process video and generate HLS with CDN URLs
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegStatic from 'ffmpeg-static';
-import ffprobeStatic from 'ffprobe-static';
 
-// Set FFmpeg path
-ffmpeg.setFfmpegPath(ffmpegStatic);
-ffmpeg.setFfprobePath(ffprobeStatic.path);
-const pipeline = promisify(stream.pipeline);
+
 
 
 
@@ -32,9 +24,19 @@ const router = express.Router();
 router.get('/series', async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
+    
+    // Try to get from cache first
+    const cachedData = await apiCache.getSeriesCache(page, limit, category);
+    
+    if (cachedData) {
+      console.log('📦 Series data served from cache');
+      return res.json(cachedData);
+    }
+    
     const where = {};
     if (category) where.category_id = category;
     where.status = 'Active';
+    
     const { count, rows } = await Series.findAndCountAll({
       where,
       offset: (page - 1) * limit,
@@ -42,25 +44,38 @@ router.get('/series', async (req, res) => {
       include: [{ model: Category }],
       order: [['created_at', 'DESC']]
     });
-    // Process all series in parallel for speed
+    
+    // Process all series in parallel for speed - generate signed URLs once
     const seriesWithPoster = await Promise.all(rows.map(async series => {
       let thumbnail_url = series.thumbnail_url;
       let carousel_image_url = series.carousel_image_url;
       
+      // Generate signed URLs directly (no separate caching needed)
       if (thumbnail_url) {
-        // Generate CDN signed URL for thumbnail using common method
         thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
       }
       
       if (carousel_image_url) {
-        // Generate CDN signed URL for carousel image if it exists
         carousel_image_url = generateCdnSignedUrlForThumbnail(carousel_image_url);
       }
       
       return { ...series.toJSON(), thumbnail_url, carousel_image_url };
     }));
-    res.json({ total: count, series: seriesWithPoster });
+    
+    const responseData = { 
+      total: count, 
+      series: seriesWithPoster,
+      cached_at: new Date().toISOString(),
+      signed_urls_generated: true
+    };
+    
+    // Cache the response with signed URLs for 2 hours
+    await apiCache.setSeriesCache(page, limit, category, responseData);
+    console.log('💾 Series data with signed URLs cached for 2 hours');
+    
+    res.json(responseData);
   } catch (error) {
+    console.error('Series API error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -68,31 +83,73 @@ router.get('/series', async (req, res) => {
 // GET /api/series/:seriesId/episodes
 router.get('/series/:seriesId/episodes', async (req, res) => {
   try {
+    const { seriesId } = req.params;
+    const deviceId = req.headers['x-device-id'];
+    
+    // Try to get from cache first (if user is not authenticated)
+    if (!deviceId) {
+      const cachedData = await apiCache.getSeriesCache('episodes', 'all', seriesId);
+      if (cachedData) {
+        console.log('📦 Episodes data served from cache');
+        return res.json(cachedData);
+      }
+    }
+    
     const episodes = await Episode.findAll({
-      where: { series_id: req.params.seriesId },
+      where: { series_id: seriesId },
       order: [['episode_number', 'ASC']]
     });
 
     // Get user by x-device-id header
-    const deviceId = req.headers['x-device-id'];
     let user = null;
-    if (deviceId) {
-      user = await models.User.findOne({ where: { device_id: deviceId } });
-    }
-
     let likedEpisodeIds = [];
     let wishlisted = false;
-    if (user) {
-      // Get all liked episode ids for this user
-      const likes = await models.Like.findAll({
-        where: { user_id: user.id, episode_id: episodes.map(e => e.id) }
-      });
-      likedEpisodeIds = likes.map(l => l.episode_id);
-      // Check if this series is in the user's wishlist
-      const wishlist = await models.Wishlist.findOne({
-        where: { user_id: user.id, series_id: req.params.seriesId }
-      });
-      wishlisted = !!wishlist;
+    
+    if (deviceId) {
+      // Try to get user session from cache first
+      let userSession = await apiCache.getUserSession(deviceId);
+      
+      if (userSession) {
+        user = userSession;
+        console.log('👤 User session served from cache');
+      } else {
+        // Fetch user from database
+        user = await models.User.findOne({ where: { device_id: deviceId } });
+        
+        if (user) {
+          // Cache user session for 2 hours
+          await apiCache.setUserSession(deviceId, user);
+          console.log('💾 User session cached for 2 hours');
+        }
+      }
+      
+      if (user) {
+        // Try to get wishlist data from cache
+        const wishlistCache = await apiCache.getWishlistCache(user.id, seriesId);
+        
+        if (wishlistCache) {
+          likedEpisodeIds = wishlistCache.likedEpisodeIds;
+          wishlisted = wishlistCache.wishlisted;
+        } else {
+          // Get all liked episode ids for this user
+          const likes = await models.Like.findAll({
+            where: { user_id: user.id, episode_id: episodes.map(e => e.id) }
+          });
+          likedEpisodeIds = likes.map(l => l.episode_id);
+          
+          // Check if this series is in the user's wishlist
+          const wishlist = await models.Wishlist.findOne({
+            where: { user_id: user.id, series_id: seriesId }
+          });
+          wishlisted = !!wishlist;
+          
+          // Cache wishlist data for 2 hours
+          await apiCache.setWishlistCache(user.id, seriesId, {
+            likedEpisodeIds,
+            wishlisted
+          });
+        }
+      }
     }
 
     // Add liked and wishlisted keys to each episode
@@ -102,8 +159,14 @@ router.get('/series/:seriesId/episodes', async (req, res) => {
       wishlisted
     }));
 
+    // Cache episodes data for non-authenticated users (2 hours)
+    if (!deviceId) {
+      await apiCache.setSeriesCache('episodes', 'all', seriesId, episodesWithFlags);
+    }
+
     res.json(episodesWithFlags);
   } catch (error) {
+    console.error('Episodes API error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -134,23 +197,39 @@ router.get('/episode-bundles', async (req, res) => {
   try {
     const { platform } = req.query; // Get platform from query params
     
+    // Try to get from cache first
+    const cachedData = await apiCache.getBundleCache(platform);
+    
+    if (cachedData) {
+      console.log('📦 Bundle data served from cache');
+      return res.json(cachedData);
+    }
+    
     const bundles = await EpisodeBundlePrice.findAll();
+    
+    let responseData;
     
     // If iOS platform is requested, include Apple product details but exclude price_points and productId
     if (platform === 'ios') {
-      const iosBundles = bundles.map(bundle => {
+      responseData = bundles.map(bundle => {
         const bundleData = bundle.toJSON();
         // Remove price_points and productId for iOS
         delete bundleData.price_points;
         delete bundleData.productId;
         return bundleData;
       });
-      return res.json(iosBundles);
+    } else {
+      // For Android or any other platform, return existing response
+      responseData = bundles;
     }
     
-    // For Android or any other platform, return existing response
-    res.json(bundles);
+    // Cache the response for 2 hours
+    await apiCache.setBundleCache(platform, responseData);
+    console.log('💾 Bundle data cached for 2 hours');
+    
+    res.json(responseData);
   } catch (error) {
+    console.error('Bundle API error:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -376,5 +455,158 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
 });
 
 
+
+// Cache management routes (for admin use)
+router.post('/cache/invalidate', async (req, res) => {
+  try {
+    const { type, userId, seriesId, deviceId } = req.body;
+    
+    switch (type) {
+      case 'series':
+        await apiCache.invalidateSeriesCache();
+        console.log('🗑️ Series cache invalidated');
+        break;
+      case 'wishlist':
+        if (userId) {
+          await apiCache.invalidateUserWishlistCache(userId);
+          console.log(`🗑️ Wishlist cache invalidated for user: ${userId}`);
+        } else {
+          // Invalidate all wishlist caches
+          const keys = await apiCache.keys('wishlist:*');
+          for (const key of keys) {
+            await apiCache.del(key);
+          }
+          console.log('🗑️ All wishlist caches invalidated');
+        }
+        break;
+      case 'bundles':
+        await apiCache.invalidateBundleCache();
+        console.log('🗑️ Bundle cache invalidated');
+        break;
+      case 'user_session':
+        if (deviceId) {
+          await apiCache.invalidateUserSession(deviceId);
+          console.log(`🗑️ User session cache invalidated for device: ${deviceId}`);
+        } else {
+          console.log('⚠️ Device ID required for user session invalidation');
+        }
+        break;
+      case 'thumbnails':
+        console.log('ℹ️ Thumbnail URLs are cached with series data - invalidate series cache instead');
+        break;
+      case 'carousel':
+        console.log('ℹ️ Carousel URLs are cached with series data - invalidate series cache instead');
+        break;
+      case 'all':
+        await apiCache.invalidateSeriesCache();
+        await apiCache.invalidateBundleCache();
+        const wishlistKeys = await apiCache.keys('wishlist:*');
+        const sessionKeys = await apiCache.keys('session:*');
+        
+        for (const key of [...wishlistKeys, ...sessionKeys]) {
+          await apiCache.del(key);
+        }
+        console.log('🗑️ All caches invalidated');
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid cache type' });
+    }
+    
+    res.json({ success: true, message: `${type} cache invalidated` });
+  } catch (error) {
+    console.error('Cache invalidation error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Redis health check route
+router.get('/cache/health', async (req, res) => {
+  try {
+    // Test Redis connection
+    const redis = await import('../config/redis.js');
+    const redisClient = redis.default;
+    
+    // Ping Redis to check connection
+    const pingResult = await redisClient.ping();
+    
+    if (pingResult === 'PONG') {
+      // Test basic Redis operations
+      const testKey = 'health_check_test';
+      const testValue = { timestamp: new Date().toISOString(), status: 'healthy' };
+      
+      // Test write
+      await redisClient.setex(testKey, 10, JSON.stringify(testValue));
+      
+      // Test read
+      const readValue = await redisClient.get(testKey);
+      
+      // Test delete
+      await redisClient.del(testKey);
+      
+      // Get Redis info
+      const info = await redisClient.info();
+      const memoryInfo = await redisClient.info('memory');
+      
+      res.json({
+        status: 'healthy',
+        redis: 'connected',
+        ping: pingResult,
+        operations: {
+          write: 'success',
+          read: 'success',
+          delete: 'success'
+        },
+        info: {
+          version: info.split('\r\n').find(line => line.startsWith('redis_version'))?.split(':')[1],
+          memory_used: memoryInfo.split('\r\n').find(line => line.startsWith('used_memory_human'))?.split(':')[1],
+          connected_clients: info.split('\r\n').find(line => line.startsWith('connected_clients'))?.split(':')[1]
+        },
+        timestamp: new Date().toISOString()
+      });
+    } else {
+      res.status(500).json({
+        status: 'unhealthy',
+        redis: 'disconnected',
+        ping: pingResult,
+        error: 'Redis ping failed'
+      });
+    }
+  } catch (error) {
+    console.error('Redis health check error:', error);
+    res.status(500).json({
+      status: 'unhealthy',
+      redis: 'error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Cache warming route (for admin use)
+router.post('/cache/warm', async (req, res) => {
+  try {
+    const { type } = req.body;
+    
+    switch (type) {
+      case 'series':
+        await apiCache.warmSeriesCache();
+        break;
+      case 'bundles':
+        await apiCache.warmBundleCache();
+        break;
+      case 'all':
+        await apiCache.warmSeriesCache();
+        await apiCache.warmBundleCache();
+        break;
+      default:
+        return res.status(400).json({ error: 'Invalid cache type' });
+    }
+    
+    res.json({ success: true, message: `${type} cache warming initiated` });
+  } catch (error) {
+    console.error('Cache warming error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 export default router;

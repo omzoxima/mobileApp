@@ -225,14 +225,38 @@ router.post('/verify-otp', async (req, res) => {
     
     let user;
     if (deviceId) {
-      user = await User.findOne({ where: { device_id: deviceId } });
-      if (user) {
+      // Try to get user session from cache first
+      const { apiCache } = await import('../config/redis.js');
+      let userSession = await apiCache.getUserSession(deviceId);
+      
+      if (userSession) {
+        user = userSession;
+        console.log('👤 SMS: User session served from cache');
+        
         // Update user with provider info
         if (cleanNumber) user.phone_or_email = cleanNumber;
         user.login_type = 'mobile';
         user.is_active = true;
         user.updated_at = new Date();
         await user.save();
+        
+        // Update cached session
+        await apiCache.setUserSession(deviceId, user);
+      } else {
+        // Fetch user from database
+        user = await User.findOne({ where: { device_id: deviceId } });
+        if (user) {
+          // Update user with provider info
+          if (cleanNumber) user.phone_or_email = cleanNumber;
+          user.login_type = 'mobile';
+          user.is_active = true;
+          user.updated_at = new Date();
+          await user.save();
+          
+          // Cache user session for 2 hours
+          await apiCache.setUserSession(deviceId, user);
+          console.log('💾 SMS: User session cached for 2 hours');
+        }
       }
     }
     

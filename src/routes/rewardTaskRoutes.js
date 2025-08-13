@@ -3,6 +3,7 @@ import models from '../models/index.js';
 import userContext from '../middlewares/userContext.js';
 import { Op } from 'sequelize';
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 
 const { RewardTask, RewardTransaction, User, AdReward, EpisodeUserAccess } = models;
 const router = express.Router();
@@ -14,12 +15,29 @@ router.get('/reward_task', async (req, res) => {
     let user = null;
     let deviceId = req.headers['x-device-id'];
     const authHeader = req.headers['authorization'];
+    
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       user = await User.findByPk(payload.userId);
     } else if (deviceId) {
-      user = await User.findOne({ where: { device_id: deviceId } });
+      // Try to get user session from cache first
+      const { apiCache } = await import('../config/redis.js');
+      let userSession = await apiCache.getUserSession(deviceId);
+      
+      if (userSession) {
+        user = userSession;
+        console.log('👤 Reward Task: User session served from cache');
+      } else {
+        // Fetch user from database
+        user = await User.findOne({ where: { device_id: deviceId } });
+        
+        if (user) {
+          // Cache user session for 2 hours
+          await apiCache.setUserSession(deviceId, user);
+          console.log('💾 Reward Task: User session cached for 2 hours');
+        }
+      }
     }
     if (!user) return res.status(401).json({ error: 'Unauthorized' });
 
