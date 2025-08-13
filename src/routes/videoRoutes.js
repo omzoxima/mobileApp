@@ -424,7 +424,7 @@ router.get('/episodes/:Id/hls-url1', async (req, res) => {
     const { lang } = req.query;
 
     if (!lang) {
-      return res.status(400).json({ error: 'Language code (lang) is required as a query parameter.' });
+      return res.status(400).json({ error: 'Language code  is required as a query parameter.' });
     }
 
     // Fetch episode just for validation
