@@ -5,7 +5,7 @@ export function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
   const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
   const KEY_B64URL = process.env.CDN_KEY_SECRET;
-  const TTL_SECS = 60 * 24; // 1 day (24 hours)
+  const TTL_SECS = 60 * 60; 
   const p = `/${thumbnailPath}`;
 
   if (!KEY_B64URL) {
