@@ -21,6 +21,40 @@ const router = express.Router();
 
 
 
+router.post("/signedcookie", async (req, res) => {
+  try {
+    let key_name = process.env.CDN_KEY_NAME;
+    let signed_cookie_key = process.env.CDN_KEY_SECRET;
+    const urlPrefix = req.body.url_prefix.trim();
+   
+    
+    console.log('CDN Key Name:', key_name);
+    console.log('CDN Key Secret exists:', !!signed_cookie_key);
+    console.log('URL Prefix:', urlPrefix);
+
+    console.log("key_name=", key_name, "signed_cookie_key=", signed_cookie_key)
+    
+    const lastIndex = urlPrefix.lastIndexOf("/");
+    let urlPrefixNew = urlPrefix.substring(0, lastIndex + 1)
+    const encoded_url_prefix = Buffer.from(urlPrefixNew).toString('base64');
+    let ms = new Date().getTime() + 86400000;
+    let tomorrow = new Date(ms);
+    let time = tomorrow.getTime();
+    console.log(time, urlPrefixNew,key_name,signed_cookie_key);
+    const keyBytes = Buffer.from(signed_cookie_key, 'base64');
+    const policy_pattern = `URLPrefix=${encoded_url_prefix}:Expires=${time}:KeyName=${key_name}`;
+    const signature = crypto.createHmac('sha1', keyBytes)
+      .update(policy_pattern)
+      .digest('base64').replace(/\+/g, '-')
+      .replace(/\//g, '_');
+    const signed_policy = `${policy_pattern}:Signature=${signature}`;
+    res.status(200).send({ status: 1, url: signed_policy })
+  } catch (error) {
+    res.status(500).send({ status: 0, message: error })
+  }
+});
+
+
 router.get('/series', async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
