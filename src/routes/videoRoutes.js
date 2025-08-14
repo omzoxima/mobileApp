@@ -59,34 +59,7 @@ router.get('/series', async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
     
-    // Try to get from cache first with URL refresh check
-    const cachedData = await apiCache.getSeriesCacheWithUrlRefresh(page, limit, category);
-    
-    if (cachedData && !cachedData._needsUrlRefresh) {
-      console.log('📦 Series data served from cache (fresh URLs)');
-      return res.json(cachedData);
-    }
-    
-    // If cached data needs URL refresh, serve it immediately and refresh in background
-    if (cachedData && cachedData._needsUrlRefresh) {
-      console.log('📦 Series data served from cache (URLs being refreshed in background)');
-      
-      // Start background URL refresh process
-      setImmediate(async () => {
-        try {
-          await refreshSeriesUrlsInCache(page, limit, category);
-          console.log('✅ Series URLs refreshed in background');
-        } catch (error) {
-          console.error('❌ Background URL refresh failed:', error);
-        }
-      });
-      
-      // Remove the refresh flag before sending response
-      const { _needsUrlRefresh, ...cleanData } = cachedData;
-      return res.json(cleanData);
-    }
-    
-    // No cache or expired cache - fetch from database
+    // Fetch directly from database
     const where = {};
     if (category) where.category_id = category;
     where.status = 'Active';
@@ -104,7 +77,7 @@ router.get('/series', async (req, res) => {
       let thumbnail_url = series.thumbnail_url;
       let carousel_image_url = series.carousel_image_url;
       
-      // Generate signed URLs directly (no separate caching needed)
+      // Generate signed URLs directly
       if (thumbnail_url) {
         thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
       }
@@ -119,14 +92,9 @@ router.get('/series', async (req, res) => {
     const responseData = { 
       total: count, 
       series: seriesWithPoster,
-      cached_at: new Date().toISOString(),
       signed_urls_generated: true,
       urls_expire_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
     };
-    
-    // Cache the response with signed URLs for 2 hours
-    await apiCache.setSeriesCache(page, limit, category, responseData);
-    console.log('💾 Series data with fresh signed URLs cached for 2 hours');
     
     res.json(responseData);
   } catch (error) {
@@ -135,55 +103,7 @@ router.get('/series', async (req, res) => {
   }
 });
 
-// Helper function to refresh URLs in cache
-async function refreshSeriesUrlsInCache(page, limit, category) {
-  try {
-    const where = {};
-    if (category) where.category_id = category;
-    where.status = 'Active';
-    
-    const { count, rows } = await Series.findAndCountAll({
-      where,
-      offset: (page - 1) * limit,
-      limit: parseInt(limit),
-      include: [{ model: Category }],
-      order: [['created_at', 'DESC']]
-    });
-    
-    // Regenerate signed URLs
-    const seriesWithFreshUrls = await Promise.all(rows.map(async series => {
-      let thumbnail_url = series.thumbnail_url;
-      let carousel_image_url = series.carousel_image_url;
-      
-      if (thumbnail_url) {
-        thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
-      }
-      
-      if (carousel_image_url) {
-        carousel_image_url = generateCdnSignedUrlForThumbnail(carousel_image_url);
-      }
-      
-      return { ...series.toJSON(), thumbnail_url, carousel_image_url };
-    }));
-    
-    const refreshedData = { 
-      total: count, 
-      series: seriesWithFreshUrls,
-      cached_at: new Date().toISOString(),
-      signed_urls_generated: true,
-      urls_expire_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      urls_refreshed_at: new Date().toISOString()
-    };
-    
-    // Update cache with fresh URLs
-    await apiCache.setSeriesCache(page, limit, category, refreshedData);
-    console.log('🔄 Series cache updated with fresh URLs');
-    
-  } catch (error) {
-    console.error('Error refreshing series URLs:', error);
-    throw error;
-  }
-}
+// Helper function removed - no longer needed without Redis caching
 
 // GET /api/series/:seriesId/episodes
 router.get('/series/:seriesId/episodes', async (req, res) => {
