@@ -25,6 +25,7 @@ router.post("/signedcookie", async (req, res) => {
   try {
     let key_name = process.env.CDN_KEY_NAME;
     let signed_cookie_key = process.env.CDN_KEY_SECRET;
+    console.log("req.body=", req.body.url_prefix);
     const urlPrefix = req.body.url_prefix.trim();
    
     
