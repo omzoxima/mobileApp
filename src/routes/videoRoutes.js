@@ -48,6 +48,7 @@ router.post("/signedcookie", async (req, res) => {
       .digest('base64').replace(/\+/g, '-')
       .replace(/\//g, '_');
     const signed_policy = `${policy_pattern}:Signature=${signature}`;
+    console.log("signed_policy=", signed_policy);
     res.status(200).send({ status: 1, url: signed_policy })
   } catch (error) {
     res.status(500).send({ status: 0, message: error })
