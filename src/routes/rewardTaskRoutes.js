@@ -344,7 +344,7 @@ router.get('/user-transaction', async (req, res) => {
     // Get all episode access records for the user
     const episodeAccessRecords = await models.EpisodeUserAccess.findAll({
       where: { user_id: user.id },
-      attributes: ['episode_id']
+      attributes: ['episode_id', 'created_at']
     });
     // Get episode details for accessed episodes
     const accessEpisodeIds = episodeAccessRecords.map(e => e.episode_id);
@@ -388,7 +388,8 @@ router.get('/user-transaction', async (req, res) => {
         series_id: ep ? ep.series_id : null,
         series_title: ep && ep.series_id ? seriesTitleMap[ep.series_id] || null : null,
         episode_number: ep ? ep.episode_number : null,
-        series_thumbnail_url: ep && ep.series_id ? seriesSignedUrlMap[ep.series_id] || null : null
+        series_thumbnail_url: ep && ep.series_id ? seriesSignedUrlMap[ep.series_id] || null : null,
+        created_at: e.created_at
       };
     });
 
