@@ -339,22 +339,10 @@ router.post('/episode/access', async (req, res) => {
   // If only series_id is provided, return all access records for that series
   if (series_id && !episode_id && user_id) {
     try {
-      // Try to get from cache first
-      const { apiCache } = await import('../config/redis.js');
-      const cachedAccess = await apiCache.getEpisodeAccessCache(user_id, series_id);
-      if (cachedAccess) {
-        console.log('📦 Episode access data served from cache');
-        return res.json(cachedAccess);
-      }
-      
       const { EpisodeUserAccess } = models;
       const records = await EpisodeUserAccess.findAll({ where: { series_id,user_id } });
       
-      const accessData = { records, user_id, series_id, cached_at: new Date().toISOString() };
-      
-      // Cache episode access data for 2 hours
-      await apiCache.setEpisodeAccessCache(user_id, series_id, accessData);
-      console.log('💾 Episode access data cached for 2 hours');
+      const accessData = { records, user_id, series_id };
       
       return res.json(accessData);
     } catch (error) {
@@ -382,14 +370,6 @@ router.post('/episode/access', async (req, res) => {
         access.updated_at = new Date();
         await access.save();
       }
-      // Invalidate episode access cache
-      try {
-        const { apiCache } = await import('../config/redis.js');
-        await apiCache.invalidateEpisodeAccessCache(user_id, series_id);
-        console.log('🗑️ Episode access cache invalidated due to access change');
-      } catch (cacheError) {
-        console.error('Cache invalidation error:', cacheError);
-      }
       
       return res.json({ message: `Access ${lock ? 'locked' : 'unlocked'}`, access });
     }
@@ -407,15 +387,6 @@ router.post('/episode/access', async (req, res) => {
         access.is_locked = false;
         access.updated_at = new Date();
         await access.save();
-        
-        // Invalidate episode access cache
-        try {
-          const { apiCache } = await import('../config/redis.js');
-          await apiCache.invalidateEpisodeAccessCache(user_id, series_id);
-          console.log('🗑️ Episode access cache invalidated due to unlock with points');
-        } catch (cacheError) {
-          console.error('Cache invalidation error:', cacheError);
-        }
         
         return res.json({ message: 'Unlocked using points', access });
       } else {
@@ -436,15 +407,6 @@ router.post('/episode/access', async (req, res) => {
           created_at: new Date(),
           updated_at: new Date()
         });
-        
-        // Invalidate episode access cache
-        try {
-          const { apiCache } = await import('../config/redis.js');
-          await apiCache.invalidateEpisodeAccessCache(user_id, series_id);
-          console.log('🗑️ Episode access cache invalidated due to new access creation');
-        } catch (cacheError) {
-          console.error('Cache invalidation error:', cacheError);
-        }
         
         return res.json({ message: 'Unlocked using points', access });
       } else {
