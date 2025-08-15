@@ -449,7 +449,7 @@ router.post('/ad-reward', async (req, res) => {
     // Create ad reward record
     await AdReward.create({
       user_id: user.id,
-      points: points,
+      points: 1.0,
       series_id: series_id,
       episode_id: episode_id,
       created_at: new Date()
