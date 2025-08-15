@@ -127,13 +127,13 @@ router.get('/search', async (req, res) => {
   }
 });
 
-// Optimized /profile route
+// Profile route without cache
 router.get('/profile', async (req, res) => {
   const { User, RewardTask, RewardTransaction } = models;
   let t; // Declare transaction outside try block
   
   try {
-    // Initial user fetching with Redis caching
+    // Initial user fetching without cache
     let user = null;
     const deviceId = req.headers['x-device-id'];
     const authHeader = req.headers['authorization'];
@@ -145,26 +145,11 @@ router.get('/profile', async (req, res) => {
         attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
       });
     } else if (deviceId) {
-      // Try to get user session from cache first
-      const { apiCache } = await import('../config/redis.js');
-      let userSession = await apiCache.getUserSession(deviceId);
-      
-      if (userSession) {
-        user = userSession;
-        console.log('👤 Profile: User session served from cache');
-      } else {
-        // Fetch user from database
-        user = await User.findOne({
-          where: { device_id: deviceId },
-          attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
-        });
-        
-        if (user) {
-          // Cache user session for 2 hours
-          await apiCache.setUserSession(deviceId, user);
-          console.log('💾 Profile: User session cached for 2 hours');
-        }
-      }
+      // Fetch user directly from database
+      user = await User.findOne({
+        where: { device_id: deviceId },
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
+      });
     }
     
     if (!user) {
@@ -222,18 +207,6 @@ router.get('/profile', async (req, res) => {
       }
 
       await t.commit();
-
-      // Invalidate user caches after new user creation
-      try {
-        const { apiCache } = await import('../config/redis.js');
-        if (deviceId) {
-          await apiCache.invalidateUserSession(deviceId);
-          await apiCache.invalidateUserProfileCache(deviceId);
-          console.log('🗑️ User caches invalidated due to new user creation');
-        }
-      } catch (cacheError) {
-        console.error('Cache invalidation error:', cacheError);
-      }
 
       return res.json({
         user: {
