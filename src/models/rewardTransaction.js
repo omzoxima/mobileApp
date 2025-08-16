@@ -42,6 +42,25 @@ export default (sequelize) => {
         key: 'id'
       }
     },
+    episode_bundle_id: {
+      type: DataTypes.UUID,
+      references: {
+        model: 'episode_bundle_prices',
+        key: 'id'
+      }
+    },
+    product_id: {
+      type: DataTypes.STRING
+    },
+    transaction_id: {
+      type: DataTypes.STRING
+    },
+    receipt: {
+      type: DataTypes.STRING
+    },
+    source: {
+      type: DataTypes.STRING
+    },
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW

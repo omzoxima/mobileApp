@@ -523,4 +523,121 @@ router.post('/ad-reward', async (req, res) => {
   }
 });
 
+// POST /api/task/episode-bundle-purchase - Handle episode bundle purchase
+router.post('/episode-bundle-purchase', async (req, res) => {
+  try {
+    const { episode_bundle_id, transaction_id, product_id, receipt, source } = req.body;
+    
+    // Validate required fields
+    if (!episode_bundle_id || !transaction_id || !product_id || !receipt || !source) {
+      return res.status(400).json({ error: 'episode_bundle_id, transaction_id, product_id, receipt, and source are required' });
+    }
+
+    // Check for mandatory x-device-id header
+    const deviceId = req.headers['x-device-id'];
+    if (!deviceId) {
+      return res.status(400).json({ error: 'x-device-id header is required' });
+    }
+
+    // Find user by device_id
+    const user = await User.findOne({ where: { device_id: deviceId } });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found for provided device_id' });
+    }
+
+    // Get episode bundle record
+    const episodeBundle = await models.EpisodeBundlePrice.findByPk(episode_bundle_id);
+    if (!episodeBundle) {
+      return res.status(404).json({ error: 'Episode bundle not found' });
+    }
+
+    let result = {};
+
+    // Check if product name contains "Package"
+    if (episodeBundle.productName && episodeBundle.productName.toLowerCase().includes('package')) {
+      // Handle subscription package - add months to current date
+      const currentDate = new Date();
+      let endDate = new Date(currentDate);
+      
+      // Add bundle_count months to current date
+      if (episodeBundle.bundle_count) {
+        endDate.setMonth(endDate.getMonth() + episodeBundle.bundle_count);
+      }
+
+      // Update user subscription dates
+      await user.update({
+        start_date: currentDate,
+        end_date: endDate,
+        updated_at: new Date()
+      });
+
+      result = {
+        type: 'subscription',
+        start_date: currentDate,
+        end_date: endDate,
+        lock:false,
+        bundle_count: episodeBundle.bundle_count,
+        message: 'Subscription extended successfully'
+      };
+    } else {
+      // Handle reward points - add bundle_count to current reward balance
+      const pointsToAdd = episodeBundle.bundle_count || 0;
+      const newBalance = (user.current_reward_balance || 0) + pointsToAdd;
+      
+      // Update user's reward balance
+      await user.update({
+        current_reward_balance: newBalance,
+        updated_at: new Date()
+      });
+
+      // Create reward transaction record
+      const rewardTransaction = await RewardTransaction.create({
+        user_id: user.id,
+        type: 'payment_earn',
+        points: pointsToAdd,
+        episode_bundle_id: episode_bundle_id,
+        product_id: product_id,
+        transaction_id: transaction_id,
+        receipt: receipt,
+        source: source,
+        created_at: new Date()
+      });
+
+      result = {
+        type: 'reward_points',
+        points_added: pointsToAdd,
+        new_balance: newBalance,
+        transaction: rewardTransaction,
+        message: 'Reward points added successfully'
+      };
+    }
+
+    // Invalidate user session cache
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      await apiCache.invalidateUserSession(deviceId);
+      await apiCache.invalidateUserTransactionsCache(deviceId);
+      console.log('🗑️ User caches invalidated due to episode bundle purchase');
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+    }
+
+    res.json({
+      success: true,
+      user_id: user.id,
+      episode_bundle: {
+        id: episodeBundle.id,
+        bundle_name: episodeBundle.bundle_name,
+        product_name: episodeBundle.productName,
+        bundle_count: episodeBundle.bundle_count
+      },
+      ...result
+    });
+
+  } catch (error) {
+    console.error('Episode bundle purchase error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process episode bundle purchase' });
+  }
+});
+
 export default router; 
