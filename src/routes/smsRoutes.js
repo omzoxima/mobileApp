@@ -4,8 +4,17 @@ import { v4 as uuidv4 } from 'uuid';
 import { Op } from 'sequelize';
 import models from '../models/index.js';
 import jwt from 'jsonwebtoken';
+import { generateUniqueReferralCode } from '../utils/referralCodeGenerator.js';
 
+const { User, RewardTransaction, OTP } = models;
 const router = express.Router();
+
+// Helper function to get local time instead of GMT
+function getLocalTime() {
+  const now = new Date();
+  const localTime = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
+  return localTime;
+}
 
 // Configuration from environment variables
 const PINNACLE_ACCESS_KEY = 'R9lJ0gfOh4w7';
@@ -104,7 +113,6 @@ router.post('/send-otp', async (req, res) => {
     const otp = generateOTP();
 
     // Store OTP in database
-    const { OTP } = models;
     try {
       console.log('Attempting to store OTP in database:', { mobile: cleanNumber, otp: otp });
       await OTP.create({
@@ -185,9 +193,6 @@ router.post('/verify-otp', async (req, res) => {
     const cleanNumber = mobile.replace(/^91/, '');
 
     // Find the OTP record
-    const { OTP,User,RewardTransaction} = models;
-   // console.log('🔍 Searching for OTP record:', { mobile: cleanNumber, otp: otp });
-    
     const otpRecord = await OTP.findOne({
       where: {
         mobile: cleanNumber,
@@ -237,7 +242,7 @@ router.post('/verify-otp', async (req, res) => {
         if (cleanNumber) user.phone_or_email = cleanNumber;
         user.login_type = 'mobile';
         user.is_active = true;
-        user.updated_at = new Date();
+        user.updated_at = getLocalTime();
         await user.save();
         
         // Update cached session
@@ -250,7 +255,7 @@ router.post('/verify-otp', async (req, res) => {
           if (cleanNumber) user.phone_or_email = cleanNumber;
           user.login_type = 'mobile';
           user.is_active = true;
-          user.updated_at = new Date();
+          user.updated_at = getLocalTime();
           await user.save();
           
           // Cache user session for 2 hours
@@ -269,11 +274,14 @@ router.post('/verify-otp', async (req, res) => {
         if (cleanNumber) user.phone_or_email = cleanNumber;
         user.login_type = 'mobile';
         user.is_active = true;
-        user.updated_at = new Date();
+        user.updated_at = getLocalTime();
         user.device_id = deviceId;
         await user.save();
       }
       if (!user) {
+        // Generate unique referral code
+        const referralCode = await generateUniqueReferralCode(User);
+        
         user = await User.create({
           phone_or_email: cleanNumber || '',
           Name: 'Mobile login User',
@@ -281,8 +289,9 @@ router.post('/verify-otp', async (req, res) => {
           is_active: true,
           current_reward_balance: 0,
           device_id: deviceId || null,
-          created_at: new Date(),
-          updated_at: new Date()
+          referral_code: referralCode,
+          created_at: getLocalTime(),
+          updated_at: getLocalTime()
         });
       }
     }
@@ -298,14 +307,14 @@ router.post('/verify-otp', async (req, res) => {
         });
         if (!alreadyGiven) {
           user.current_reward_balance += loginReward.points;
-          user.updated_at = new Date();
+          user.updated_at = getLocalTime();
           await user.save();
           await RewardTransaction.create({
             user_id: user.id,
             type: 'login',
             points: loginReward.points,
-            created_at: new Date(),
-            updated_at: new Date(),
+            created_at: getLocalTime(),
+            updated_at: getLocalTime(),
             task_id: loginReward.id
           });
         }

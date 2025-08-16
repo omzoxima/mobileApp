@@ -2,6 +2,7 @@ import express from 'express';
 import jwt from 'jsonwebtoken';
 import models from '../models/index.js';
 import fetch from 'node-fetch';
+import { generateUniqueReferralCode } from '../utils/referralCodeGenerator.js';
 
 const { User, RewardTransaction } = models;
 const router = express.Router();
@@ -76,6 +77,9 @@ router.post('/social-login', async (req, res) => {
       where[providerField] = providerId;
       user = await User.findOne({ where });
       if (!user) {
+        // Generate unique referral code
+        const referralCode = await generateUniqueReferralCode(User);
+        
         user = await User.create({
           [providerField]: providerId,
           phone_or_email: email || '',
@@ -83,7 +87,8 @@ router.post('/social-login', async (req, res) => {
           login_type: provider,
           is_active: true,
           current_reward_balance: 0,
-          device_id: deviceId || null
+          device_id: deviceId || null,
+          referral_code: referralCode
         });
       }
     }

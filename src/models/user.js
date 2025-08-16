@@ -21,6 +21,11 @@ export default (sequelize) => {
     device_id: {
       type: DataTypes.STRING
     },
+    referral_code: {
+      type: DataTypes.STRING,
+      unique: true,
+      allowNull: true
+    },
     device_change_count: {
       type: DataTypes.INTEGER,
       defaultValue: 0

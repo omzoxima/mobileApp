@@ -4,9 +4,17 @@ import userContext from '../middlewares/userContext.js';
 import { Op } from 'sequelize';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
+import { generateUniqueReferralCode } from '../utils/referralCodeGenerator.js';
 
 const { RewardTask, RewardTransaction, User, AdReward, EpisodeUserAccess } = models;
 const router = express.Router();
+
+// Helper function to get local time instead of GMT
+function getLocalTime() {
+  const now = new Date();
+  const localTime = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
+  return localTime;
+}
 
 // /reward_task route - NO CACHING as requested
 router.get('/reward_task', async (req, res) => {
@@ -96,9 +104,15 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
       user = req.user;
     } else if (req.guestDeviceId) {
       // Find or create guest user
+      const referralCode = await generateUniqueReferralCode(User);
       const [guestUser] = await User.findOrCreate({
         where: { device_id: req.guestDeviceId, login_type: 'guest' },
-        defaults: { current_reward_balance: 0, is_active: true, login_type: 'guest' }
+        defaults: { 
+          current_reward_balance: 0, 
+          is_active: true, 
+          login_type: 'guest',
+          referral_code: referralCode
+        }
       });
       userId = guestUser.id;
       user = guestUser;
@@ -130,8 +144,8 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
       task_id: taskId,
       type: 'earn',
       points: task.points,
-      created_at: new Date(),
-      updated_at: new Date()
+      created_at: getLocalTime(),
+      updated_at: getLocalTime()
     });
 
     // Invalidate user session cache if device_id is available (reward tasks not cached)
@@ -166,7 +180,7 @@ router.post('/streak/episode-watched', async (req, res) => {
     }
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const today = new Date();
+    const today = getLocalTime();
     const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
     let lastStreakDateStr = null;
     if (user.last_streak_date) {
@@ -186,12 +200,12 @@ router.post('/streak/episode-watched', async (req, res) => {
     } else if (lastStreakDateStr === yesterday) {
       user.current_streak += 1;
       user.last_streak_date = today;
-      user.updated_at = new Date();
+      user.updated_at = getLocalTime();
       streakIncreased = true;
     } else {
       user.current_streak = 1;
       user.last_streak_date = today;
-      user.updated_at = new Date();
+      user.updated_at = getLocalTime();
       streakReset = true;
     }
     await user.save();
@@ -220,8 +234,8 @@ router.post('/streak/episode-watched', async (req, res) => {
           streak_count: user.current_streak,
           disabled_streak_count: false,
           task_id: rewardTask.id,
-          created_at: new Date(),
-          updated_at: new Date()
+          created_at: getLocalTime(),
+          updated_at: getLocalTime()
         });
         user.current_reward_balance += rewardTask.points;
         await user.save();
@@ -257,8 +271,8 @@ router.post('/streak/episode-watched', async (req, res) => {
           type: 'earn',
           points: dailyWatchTask.points,
           task_id: dailyWatchTask.id,
-          created_at: new Date(),
-          updated_at: new Date()
+          created_at: getLocalTime(),
+          updated_at: getLocalTime()
         });
         user.current_reward_balance += dailyWatchTask.points;
         await user.save();
@@ -452,7 +466,7 @@ router.post('/ad-reward', async (req, res) => {
       points: 1.0,
       series_id: series_id,
       episode_id: episode_id,
-      created_at: new Date()
+      created_at: getLocalTime()
     });
 
     // Calculate total points for this user
@@ -469,8 +483,8 @@ router.post('/ad-reward', async (req, res) => {
         series_id: series_id,
         user_id: user.id,
         is_locked: false,
-        created_at: new Date(),
-        updated_at: new Date()
+        created_at: getLocalTime(),
+        updated_at: getLocalTime()
       });
 
       // Delete all ad reward records for this user
@@ -556,7 +570,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
     // Check if product name contains "Package"
     if (episodeBundle.productName && episodeBundle.productName.toLowerCase().includes('package')) {
       // Handle subscription package - add months to current date
-      const currentDate = new Date();
+      const currentDate = getLocalTime();
       let endDate = new Date(currentDate);
       
       // Add bundle_count months to current date
@@ -568,7 +582,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
       await user.update({
         start_date: currentDate,
         end_date: endDate,
-        updated_at: new Date()
+        updated_at: getLocalTime()
       });
 
       // Create reward transaction record for subscription package
@@ -581,7 +595,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         transaction_id: transaction_id,
         receipt: receipt,
         source: source,
-        created_at: new Date()
+        created_at: getLocalTime()
       });
 
       result = {
@@ -601,7 +615,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
       // Update user's reward balance
       await user.update({
         current_reward_balance: newBalance,
-        updated_at: new Date()
+        updated_at: getLocalTime()
       });
 
       // Create reward transaction record
@@ -614,7 +628,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         transaction_id: transaction_id,
         receipt: receipt,
         source: source,
-        created_at: new Date()
+        created_at: getLocalTime()
       });
 
       result = {

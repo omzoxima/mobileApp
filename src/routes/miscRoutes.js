@@ -6,11 +6,17 @@ import userContext from '../middlewares/userContext.js';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
+import { generateUniqueReferralCode } from '../utils/referralCodeGenerator.js';
 
 const { Series, Episode, User, StaticContent, Wishlist, OTP } = models;
 const router = express.Router();
 
-
+// Helper function to get local time instead of GMT
+function getLocalTime() {
+  const now = new Date();
+  const localTime = new Date(now.getTime() - (now.getTimezoneOffset() * 60000));
+  return localTime;
+}
 
 
 // GET /api/wishlist/series-episodes?user_id=USER_ID
@@ -155,22 +161,27 @@ router.get('/profile', async (req, res) => {
     if (!user) {
       // Only start transaction when creating new user
       t = await sequelize.transaction();
+      
+      // Generate unique referral code
+      const referralCode = await generateUniqueReferralCode(User);
+      
       user = await User.create({
         device_id: deviceId,
         Name: 'Guest User',
         login_type: 'guest',
         current_reward_balance: 0,
         is_active: true,
+        referral_code: referralCode,
        // phone_or_email:'Guest User',
-        created_at: new Date(),
-        updated_at: new Date()
+        created_at: getLocalTime(),
+        updated_at: getLocalTime()
       }, { 
         transaction: t,
         returning: true
       });
       
       // Process rewards for new user
-      const today = new Date();
+      const today = getLocalTime();
       const appOpenTasks = await RewardTask.findAll({
         where: {
           type: 'app_open',
@@ -190,7 +201,7 @@ router.get('/profile', async (req, res) => {
           type: 'earn',
           points: task.points,
           created_at: today,
-          updated_at: new Date()
+          updated_at: getLocalTime()
         });
         pointsGranted += task.points;
       }
@@ -224,7 +235,7 @@ router.get('/profile', async (req, res) => {
     }
     
     // Existing user logic (no transaction needed for simple read)
-    const today = new Date();
+    const today = getLocalTime();
     let lock = true;
     if (user.start_date && user.end_date) {
       lock = !(today >= user.start_date && today <= user.end_date);
