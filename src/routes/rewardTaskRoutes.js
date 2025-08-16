@@ -571,13 +571,27 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         updated_at: new Date()
       });
 
+      // Create reward transaction record for subscription package
+      const rewardTransaction = await RewardTransaction.create({
+        user_id: user.id,
+        type: 'payment_earn',
+        points: episodeBundle.bundle_count || 0,
+        episode_bundle_id: episode_bundle_id,
+        product_id: product_id,
+        transaction_id: transaction_id,
+        receipt: receipt,
+        source: source,
+        created_at: new Date()
+      });
+
       result = {
         type: 'subscription',
         start_date: currentDate,
         end_date: endDate,
-        lock:false,
+        lock: false,
         bundle_count: episodeBundle.bundle_count,
-        message: 'Subscription extended successfully'
+        message: 'Subscription extended successfully',
+        transaction: rewardTransaction
       };
     } else {
       // Handle reward points - add bundle_count to current reward balance
