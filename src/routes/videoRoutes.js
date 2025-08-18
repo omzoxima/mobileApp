@@ -244,10 +244,13 @@ router.get('/episode-bundles', async (req, res) => {
     
     if (cachedData) {
       console.log('📦 Bundle data served from cache');
-      return res.json(cachedData);
+      const sortedCached = Array.isArray(cachedData)
+        ? [...cachedData].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+        : cachedData;
+      return res.json(sortedCached);
     }
     
-    const bundles = await EpisodeBundlePrice.findAll();
+    const bundles = await EpisodeBundlePrice.findAll({ order: [['updated_at', 'DESC']] });
     
     let responseData;
     
