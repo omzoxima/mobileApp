@@ -365,10 +365,41 @@ router.get('/user-transaction', async (req, res) => {
     }
     const taskMap = {};
     tasks.forEach(task => { taskMap[task.id] = task.name; });
-    const transactionsWithTask = transactions.map(t => ({
-      ...t.toJSON(),
-      task_name: t.task_id ? (taskMap[t.task_id] || null) : null
-    }));
+
+    // Get bundle information for payment_earn transactions
+    const bundleIds = transactions
+      .filter(t => t.type === 'payment_earn' && t.episode_bundle_id)
+      .map(t => t.episode_bundle_id);
+    
+    let bundles = [];
+    if (bundleIds.length > 0) {
+      bundles = await models.EpisodeBundlePrice.findAll({
+        where: { id: bundleIds },
+        attributes: ['id', 'bundle_name', 'price_points', 'appleprice']
+      });
+    }
+    const bundleMap = {};
+    bundles.forEach(bundle => { bundleMap[bundle.id] = bundle; });
+
+    // Get platform from request headers
+    const platform = req.headers['x-platform'] || 'android'; // Default to android
+
+    const transactionsWithTask = transactions.map(t => {
+      const transactionData = {
+        ...t.toJSON(),
+        task_name: t.task_id ? (taskMap[t.task_id] || null) : null
+      };
+
+      // Add bundle information for payment_earn transactions
+      if (t.type === 'payment_earn' && t.episode_bundle_id && bundleMap[t.episode_bundle_id]) {
+        const bundle = bundleMap[t.episode_bundle_id];
+        transactionData.bundle_name = bundle.bundle_name;
+        transactionData.bundle_price = platform === 'ios' ? bundle.appleprice : bundle.price_points;
+        transactionData.price_id = platform === 'ios' ? bundle.appleproductid : bundle.productId;
+      }
+
+      return transactionData;
+    });
 
     // Get all episode access records for the user
     const episodeAccessRecords = await models.EpisodeUserAccess.findAll({
