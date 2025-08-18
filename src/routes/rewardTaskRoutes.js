@@ -61,7 +61,21 @@ router.get('/reward_task', async (req, res) => {
     const completedStreakTaskIds = Array.from(new Set(completedStreakTransactions.map(r => r.task_id)));
     // --- End streak logic ---
 
-    // Filter out one_time tasks already claimed
+    // --- Get share task completion status ---
+    // Get all share task IDs
+    const shareTaskIds = tasks.filter(t => t.type === 'share').map(t => t.id);
+    // Check which share tasks are completed by looking in reward transactions
+    const completedShareTransactions = await RewardTransaction.findAll({
+      where: {
+        user_id: user.id,
+        task_id: { [Op.in]: shareTaskIds },
+        type: 'earn'
+      }
+    });
+    const completedShareTaskIds = Array.from(new Set(completedShareTransactions.map(r => r.task_id)));
+    // --- End share logic ---
+
+    // Filter out one-time tasks already claimed
     const result = tasks.map(task => ({
       id: task.id,
       name: task.name,
@@ -74,10 +88,11 @@ router.get('/reward_task', async (req, res) => {
       max_count: task.max_count
     }));
     
-    // Combine claimed one-time and completed streak task IDs for completed_streak_task_ids
+    // Combine all completed task IDs: one-time, streak, and share
     const allCompletedTaskIds = Array.from(new Set([
       ...Array.from(claimedIds),
-      ...completedStreakTaskIds
+      ...completedStreakTaskIds,
+      ...completedShareTaskIds
     ]));
     
     const responseData = {
