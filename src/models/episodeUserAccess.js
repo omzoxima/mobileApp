@@ -24,6 +24,11 @@ export default (sequelize) => {
       allowNull: false,
       defaultValue: true
     },
+    point: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0
+    },
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW

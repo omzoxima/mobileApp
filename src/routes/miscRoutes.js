@@ -377,6 +377,7 @@ router.post('/episode/access', async (req, res) => {
           series_id,
           user_id,
           is_locked: lock,
+          point: 0, // Default point value for explicit lock/unlock
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
@@ -410,6 +411,7 @@ router.post('/episode/access', async (req, res) => {
       if (hasActiveSubscription) {
         // Unlock episode using subscription (no point deduction)
         access.is_locked = false;
+        access.point = 0; // 0 points for subscription access
         access.updated_at = getLocalTime();
         await access.save();
         
@@ -424,6 +426,7 @@ router.post('/episode/access', async (req, res) => {
         user.current_reward_balance -= 1;
         await user.save();
         access.is_locked = false;
+        access.point = 1; // 1 point for point-based access
         access.updated_at = getLocalTime();
         await access.save();
         
@@ -451,6 +454,7 @@ router.post('/episode/access', async (req, res) => {
           series_id,
           user_id,
           is_locked: false,
+          point: 0, // 0 points for subscription access
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
@@ -471,6 +475,7 @@ router.post('/episode/access', async (req, res) => {
           series_id,
           user_id,
           is_locked: false,
+          point: 1, // 1 point for point-based access
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
