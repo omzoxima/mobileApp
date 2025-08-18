@@ -26,6 +26,10 @@ export default (sequelize) => {
       unique: true,
       allowNull: true
     },
+    app_install_count: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0
+    },
     device_change_count: {
       type: DataTypes.INTEGER,
       defaultValue: 0

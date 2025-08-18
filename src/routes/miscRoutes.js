@@ -148,13 +148,13 @@ router.get('/profile', async (req, res) => {
       const token = authHeader.split(' ')[1];
       const payload = jwt.verify(token, process.env.JWT_SECRET);
       user = await User.findByPk(payload.userId, {
-        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date', 'phone_or_email', 'referral_code', 'app_install_count']
       });
     } else if (deviceId) {
       // Fetch user directly from database
       user = await User.findOne({
         where: { device_id: deviceId },
-        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date','phone_or_email']
+        attributes: ['id', 'Name', 'device_id', 'current_reward_balance', 'start_date', 'end_date', 'phone_or_email', 'referral_code', 'app_install_count']
       });
     }
     
@@ -228,7 +228,9 @@ router.get('/profile', async (req, res) => {
           lock: true, // New users typically start locked
           start_date: user.start_date,
           end_date: user.end_date,
-          phone_or_email: user.phone_or_email
+          phone_or_email: user.phone_or_email,
+          referral_code:user.referral_code,
+          app_install_count:user.app_install_count
         },
         pointsGranted
       });
@@ -585,6 +587,107 @@ router.post('/action', userContext, async (req, res) => {
   }
 });
 
+// POST /api/referral - Handle referral code usage
+router.post('/referral', async (req, res) => {
+  try {
+    const { referral_code } = req.body;
+    const deviceId = req.headers['x-device-id'];
+    
+    // Validate required fields
+    if (!referral_code) {
+      return res.status(400).json({ error: 'referral_code is required' });
+    }
+    
+    if (!deviceId) {
+      return res.status(400).json({ error: 'x-device-id header is mandatory' });
+    }
 
+    // Find user by referral code
+    const referrerUser = await User.findOne({ 
+      where: { referral_code: referral_code } 
+    });
+    
+    if (!referrerUser) {
+      return res.status(404).json({ error: 'Invalid referral code' });
+    }
+
+
+
+    // Increment app_install_count for the referrer
+    await referrerUser.increment('app_install_count');
+    await referrerUser.reload(); // Reload to get updated count
+
+    // Check if app_install_count matches any share type reward task unlock_value
+    const shareRewardTask = await models.RewardTask.findOne({
+      where: {
+        type: 'share',
+        unlock_value: referrerUser.app_install_count,
+        is_active: true
+      }
+    });
+
+      if (shareRewardTask) {
+        // Add points to referrer's reward balance
+        const newBalance = (referrerUser.current_reward_balance || 0) + shareRewardTask.points;
+        await referrerUser.update({
+          current_reward_balance: newBalance,
+          updated_at: getLocalTime()
+        });
+
+        // Create reward transaction for referral
+        const rewardTransaction = await models.RewardTransaction.create({
+          user_id: referrerUser.id,
+          type: 'earn',
+          points: shareRewardTask.points,
+          task_id: shareRewardTask.id,
+          source: deviceId,
+          created_at: getLocalTime()
+        });
+
+        // Invalidate user caches
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.invalidateUserSession(referrerUser.device_id);
+          await apiCache.invalidateUserTransactionsCache(referrerUser.device_id);
+          console.log('🗑️ Referrer user caches invalidated due to referral reward');
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+
+        return res.json({
+          success: true,
+          message: 'Referral successful! Reward points awarded.',
+          referrer: {
+            id: referrerUser.id,
+            referral_code: referrerUser.referral_code,
+            app_install_count: referrerUser.app_install_count,
+            points_awarded: shareRewardTask.points,
+            new_balance: newBalance
+          },
+          reward_task: {
+            id: shareRewardTask.id,
+            name: shareRewardTask.name,
+            points: shareRewardTask.points
+          },
+          transaction: rewardTransaction
+        });
+      }
+
+    // If no reward task found, just return success
+    return res.json({
+      success: true,
+      message: 'Referral successful!',
+      referrer: {
+        id: referrerUser.id,
+        referral_code: referrerUser.referral_code,
+        app_install_count: referrerUser.app_install_count
+      }
+    });
+
+  } catch (error) {
+    console.error('Referral error:', error);
+    res.status(500).json({ error: error.message || 'Failed to process referral' });
+  }
+});
 
 export default router; 

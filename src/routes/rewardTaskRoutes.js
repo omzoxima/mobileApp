@@ -595,6 +595,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         transaction_id: transaction_id,
         receipt: receipt,
         source: source,
+        task_name:episodeBundle.bundle_name,
         created_at: getLocalTime()
       });
 
@@ -628,6 +629,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         transaction_id: transaction_id,
         receipt: receipt,
         source: source,
+        task_name:episodeBundle.bundle_name,
         created_at: getLocalTime()
       });
 
