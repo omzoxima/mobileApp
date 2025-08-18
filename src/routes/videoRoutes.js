@@ -240,7 +240,7 @@ router.get('/episode-bundles', async (req, res) => {
     const { platform } = req.query; // Get platform from query params
     
     // Try to get from cache first
-    const cachedData = await apiCache.getBundleCache(platform);
+   /* const cachedData = await apiCache.getBundleCache(platform);
     
     if (cachedData) {
       console.log('📦 Bundle data served from cache');
@@ -248,7 +248,7 @@ router.get('/episode-bundles', async (req, res) => {
         ? [...cachedData].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
         : cachedData;
       return res.json(sortedCached);
-    }
+    }*/
     
     const bundles = await EpisodeBundlePrice.findAll({ order: [['updated_at', 'DESC']] });
     
