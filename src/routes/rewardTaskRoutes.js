@@ -335,13 +335,6 @@ router.get('/user-transaction', async (req, res) => {
       return res.status(400).json({ error: 'x-device-id header is required' });
     }
     
-    // Try to get from cache first
-    const { apiCache } = await import('../config/redis.js');
-    const cachedTransactions = await apiCache.getUserTransactionsCache(deviceId);
-    if (cachedTransactions) {
-      console.log('📦 User transactions served from cache');
-      return res.json(cachedTransactions);
-    }
     
     const user = await User.findOne({ where: { device_id: deviceId } });
     if (!user) {
@@ -375,7 +368,7 @@ router.get('/user-transaction', async (req, res) => {
     if (bundleIds.length > 0) {
       bundles = await models.EpisodeBundlePrice.findAll({
         where: { id: bundleIds },
-        attributes: ['id', 'bundle_name', 'price_points', 'appleprice']
+        attributes: ['id', 'bundle_name', 'price_points', 'appleprice', 'productId', 'appleproductid']
       });
     }
     const bundleMap = {};
@@ -456,13 +449,8 @@ router.get('/user-transaction', async (req, res) => {
     const transactionData = {
       transactions: transactionsWithTask,
       episode_access: episodeAccess,
-      user_id: user.id,
-      cached_at: new Date().toISOString()
+      user_id: user.id
     };
-    
-    // Cache user transactions for 2 hours
-    await apiCache.setUserTransactionsCache(deviceId, transactionData);
-    console.log('💾 User transactions cached for 2 hours');
 
     res.json(transactionData);
   } catch (error) {
