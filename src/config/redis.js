@@ -232,11 +232,11 @@ export const cacheMiddleware = (ttl = 300) => {
 export const apiCache = {
   // Cache TTL configuration - all data cached for 2 hours
   TTL: {
-    SERIES: 7200,        // 2 hours (series data + thumbnail/carousel URLs)
-    WISHLIST: 7200,      // 2 hours (user preferences)
-    BUNDLE_PRICES: 7200, // 2 hours (pricing data)
-    USER_SESSIONS: 7200, // 2 hours (device-based sessions)
-    EPISODES: 7200       // 2 hours (episode data)
+    SERIES: parseInt(process.env.CACHE_TTL_SERIES || '7200'),        // 2 hours (series data + thumbnail/carousel URLs)
+    WISHLIST: parseInt(process.env.CACHE_TTL_WISHLIST || '7200'),      // 2 hours (user preferences)
+    BUNDLE_PRICES: parseInt(process.env.CACHE_TTL_BUNDLES || '7200'), // 2 hours (pricing data)
+    USER_SESSIONS: parseInt(process.env.CACHE_TTL_SESSIONS || '7200'), // 2 hours (device-based sessions)
+    EPISODES: parseInt(process.env.CACHE_TTL_EPISODES || '7200')       // 2 hours (episode data)
   },
 
   // Series caching
@@ -574,7 +574,7 @@ export const apiCache = {
       // Check for URLs that need refresh every 30 minutes
       setInterval(async () => {
         await this.refreshExpiringUrls();
-      }, 30 * 60 * 1000); // 30 minutes
+      }, parseInt(process.env.CACHE_REFRESH_INTERVAL || '1800000')); // 30 minutes default
       
       console.log('⏰ URL refresh scheduler started (every 30 minutes)');
     } catch (error) {

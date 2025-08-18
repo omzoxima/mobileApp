@@ -5,7 +5,7 @@ export function generateCdnSignedUrlForThumbnail(thumbnailPath) {
   const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
   const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
   const KEY_B64URL = process.env.CDN_KEY_SECRET;
-  const TTL_SECS = 60 * 60; 
+  const TTL_SECS = parseInt(process.env.CDN_TTL_THUMBNAIL || '3600', 10); 
   const p = `/${thumbnailPath}`;
 
   if (!KEY_B64URL) {
@@ -95,7 +95,7 @@ export function generateCdnSignedCookie(resourcePath) {
   const CDN_HOST = process.env.CDN_DOMAIN || 'cdn.tuktuki.com';
   const KEY_NAME = process.env.CDN_KEY_NAME || 'key1';
   const KEY_B64URL = process.env.CDN_KEY_SECRET;
-  const TTL_SECS = 60 * 24; // 1 day (in seconds)
+  const TTL_SECS = parseInt(process.env.CDN_TTL_COOKIE || '86400', 10); // 1 day (in seconds)
 
   if (!KEY_B64URL) {
     throw new Error('CDN_KEY_SECRET not set');

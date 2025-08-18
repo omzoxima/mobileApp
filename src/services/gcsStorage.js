@@ -1,7 +1,7 @@
 import { Storage } from '@google-cloud/storage';
 
 const storage = new Storage();
-const bucketName = 'run-sources-tuktuki-464514-asia-south1';
+const bucketName = process.env.GCS_BUCKET_NAME;
  
 
  

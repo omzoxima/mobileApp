@@ -9,7 +9,7 @@ const router = express.Router();
 
 // Helper: Generate JWT
 function generateJwt(user) {
-  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRY || '30d' });
 }
 
 // Helper: Get user details from provider

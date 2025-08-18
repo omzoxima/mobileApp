@@ -17,12 +17,12 @@ function getLocalTime() {
 }
 
 // Configuration from environment variables
-const PINNACLE_ACCESS_KEY = 'R9lJ0gfOh4w7';
+const PINNACLE_ACCESS_KEY = process.env.PINNACLE_ACCESS_KEY;
 const DEFAULT_SENDER = 'TKIENT';
 const DEFAULT_DLT_ENTITY_ID = '1001186179422431539';
 const DEFAULT_DLT_TEMPLATE_ID = '1007685518923891699';
 function generateJwt(user) {
-  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: '30d' });
+  return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRY || '30d' });
 }
 // Pinnacle SMS function based on working curl command
 async function sendPinnacleSMS(accesskey, obj) {
@@ -31,7 +31,7 @@ async function sendPinnacleSMS(accesskey, obj) {
     
         const config = {
       method: 'post',
-      url: 'https://transapi.pinnacle.in/genericapi/JSONGenericReceiver',
+      url: process.env.PINNACLE_API_URL || 'https://transapi.pinnacle.in/genericapi/JSONGenericReceiver',
       headers: { 
         'Content-Type': 'application/json'
       },
