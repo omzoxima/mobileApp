@@ -5,7 +5,10 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "nodemon src/index.js"
+    "dev": "nodemon src/index.js",
+    "load-test:heavy": "node heavy-load-test.js",
+    "load-test:heavy-quick": "node quick-heavy-test.js",
+    "load-test:ultra-heavy": "node ultra-heavy-load-test.js"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
@@ -36,6 +39,7 @@
     "uuid": "^9.0.1"
   },
   "devDependencies": {
+    "artillery": "^2.0.24",
     "nodemon": "^3.0.1"
   },
   "type": "module"

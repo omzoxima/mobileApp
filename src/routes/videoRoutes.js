@@ -61,6 +61,29 @@ router.get('/series', async (req, res) => {
   try {
     const { page = 1, limit = 10, category } = req.query;
     
+    // Try cache first (with URL expiry awareness)
+    try {
+      const cached = await apiCache.getSeriesCacheWithUrlRefresh(page, limit, category);
+      if (cached) {
+        console.log('📦 Series listing served from cache');
+        // If URLs are close to expiry, refresh in background
+        if (cached._needsUrlRefresh) {
+          setImmediate(async () => {
+            try {
+              const { refreshSeriesUrlsInCache } = await import('./videoRoutes.js');
+              await refreshSeriesUrlsInCache(parseInt(page), parseInt(limit), category || null);
+              console.log('🔄 Background refresh of series URLs completed');
+            } catch (bgErr) {
+              console.error('Background refresh error:', bgErr);
+            }
+          });
+        }
+        return res.json(cached);
+      }
+    } catch (e) {
+      console.error('Series cache read error:', e);
+    }
+
     // Fetch directly from database
     const where = {};
     if (category) where.category_id = category;
@@ -98,12 +121,62 @@ router.get('/series', async (req, res) => {
       urls_expire_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours from now
     };
     
+    // Set cache (2 hours)
+    try {
+      await apiCache.setSeriesCache(page, limit, category, responseData);
+      console.log('💾 Series listing cached for 2 hours');
+    } catch (e) {
+      console.error('Series cache write error:', e);
+    }
+
     res.json(responseData);
   } catch (error) {
     console.error('Series API error:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+// Exported helper for background refreshing of signed URLs in cache
+export async function refreshSeriesUrlsInCache(page = 1, limit = 10, category = null) {
+  try {
+    const where = {};
+    if (category) where.category_id = category;
+    where.status = 'Active';
+
+    const { count, rows } = await models.Series.findAndCountAll({
+      where,
+      offset: (page - 1) * limit,
+      limit: parseInt(limit),
+      include: [{ model: models.Category }],
+      order: [['created_at', 'DESC']]
+    });
+
+    const seriesWithPoster = await Promise.all(rows.map(async series => {
+      let thumbnail_url = series.thumbnail_url;
+      let carousel_image_url = series.carousel_image_url;
+
+      if (thumbnail_url) {
+        thumbnail_url = generateCdnSignedUrlForThumbnail(thumbnail_url);
+      }
+      if (carousel_image_url) {
+        carousel_image_url = generateCdnSignedUrlForThumbnail(carousel_image_url);
+      }
+      return { ...series.toJSON(), thumbnail_url, carousel_image_url };
+    }));
+
+    const responseData = {
+      total: count,
+      series: seriesWithPoster,
+      signed_urls_generated: true,
+      urls_expire_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+
+    await apiCache.setSeriesCache(page, limit, category, responseData);
+    console.log(`💾 Series cache refreshed for page=${page} limit=${limit} category=${category || 'all'}`);
+  } catch (error) {
+    console.error('refreshSeriesUrlsInCache error:', error);
+  }
+}
 
 // Helper function removed - no longer needed without Redis caching
 
@@ -240,15 +313,18 @@ router.get('/episode-bundles', async (req, res) => {
     const { platform } = req.query; // Get platform from query params
     
     // Try to get from cache first
-   /* const cachedData = await apiCache.getBundleCache(platform);
-    
-    if (cachedData) {
-      console.log('📦 Bundle data served from cache');
-      const sortedCached = Array.isArray(cachedData)
-        ? [...cachedData].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
-        : cachedData;
-      return res.json(sortedCached);
-    }*/
+    try {
+      const cachedData = await apiCache.getBundleCache(platform);
+      if (cachedData) {
+        console.log('📦 Bundle data served from cache');
+        const sortedCached = Array.isArray(cachedData)
+          ? [...cachedData].sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))
+          : cachedData;
+        return res.json(sortedCached);
+      }
+    } catch (e) {
+      console.error('Bundle cache read error:', e);
+    }
     
     const bundles = await EpisodeBundlePrice.findAll({ order: [['updated_at', 'DESC']] });
     
@@ -269,8 +345,12 @@ router.get('/episode-bundles', async (req, res) => {
     }
     
     // Cache the response for 2 hours
-    await apiCache.setBundleCache(platform, responseData);
-    console.log('💾 Bundle data cached for 2 hours');
+    try {
+      await apiCache.setBundleCache(platform, responseData);
+      console.log('💾 Bundle data cached for 2 hours');
+    } catch (e) {
+      console.error('Bundle cache write error:', e);
+    }
     
     res.json(responseData);
   } catch (error) {

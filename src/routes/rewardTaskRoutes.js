@@ -109,7 +109,7 @@ router.get('/reward_task', async (req, res) => {
 });
 
 // POST /api/reward-tasks/:taskId/complete
-router.post('/:taskId/complete', userContext, async (req, res) => {
+/*router.post('/:taskId/complete', userContext, async (req, res) => {
   try {
     const { taskId } = req.params;
     let userId = null;
@@ -181,7 +181,7 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
     console.error('Error completing reward task:', error);
     res.status(500).json({ error: error.message || 'Failed to complete reward task' });
   }
-});
+});*/
 
 // POST /streak/episode-watched
 router.post('/streak/episode-watched', async (req, res) => {
@@ -254,6 +254,15 @@ router.post('/streak/episode-watched', async (req, res) => {
         });
         user.current_reward_balance += rewardTask.points;
         await user.save();
+
+        // Invalidate reward tasks cache since new transaction was created
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.invalidateRewardTasksCache();
+          console.log('🗑️ Reward tasks cache invalidated due to new streak transaction');
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
       }
     }
 
@@ -292,6 +301,15 @@ router.post('/streak/episode-watched', async (req, res) => {
         user.current_reward_balance += dailyWatchTask.points;
         await user.save();
         dailyWatchPointAwarded = true;
+
+        // Invalidate reward tasks cache since new transaction was created
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.invalidateRewardTasksCache();
+          console.log('🗑️ Reward tasks cache invalidated due to new transaction');
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
       } 
     }
     // --- End daily watch reward logic ---
@@ -302,6 +320,7 @@ router.post('/streak/episode-watched', async (req, res) => {
       
       if (device_id) {
         await apiCache.invalidateUserSession(device_id);
+        await apiCache.invalidateUserProfileCache(device_id);
         await apiCache.invalidateUserTransactionsCache(device_id);
         console.log('🗑️ User caches invalidated due to streak update');
       }
@@ -335,6 +354,17 @@ router.get('/user-transaction', async (req, res) => {
       return res.status(400).json({ error: 'x-device-id header is required' });
     }
     
+    // Try cache first (per device)
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      const cached = await apiCache.getUserTransactionsCache(deviceId);
+      if (cached) {
+        console.log('📦 User transactions served from cache');
+        return res.json(cached);
+      }
+    } catch (e) {
+      console.error('User transactions cache read error:', e);
+    }
     
     const user = await User.findOne({ where: { device_id: deviceId } });
     if (!user) {
@@ -453,6 +483,15 @@ router.get('/user-transaction', async (req, res) => {
       user_id: user.id
     };
 
+    // Set cache for 2 hours (uses configured TTL for USER_SESSIONS)
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      await apiCache.setUserTransactionsCache(deviceId, transactionData);
+      console.log('💾 User transactions cached for 2 hours');
+    } catch (e) {
+      console.error('User transactions cache write error:', e);
+    }
+
     res.json(transactionData);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -504,6 +543,15 @@ router.post('/ad-reward', async (req, res) => {
       created_at: getLocalTime()
     });
 
+    // Invalidate ad rewards cache since new record was created
+    try {
+      const { apiCache } = await import('../config/redis.js');
+      await apiCache.invalidateAdRewardsCache(user.id);
+      console.log('🗑️ Ad rewards cache invalidated due to new record');
+    } catch (cacheError) {
+      console.error('Cache invalidation error:', cacheError);
+    }
+
     // Calculate total points for this user
     const totalPoints = await AdReward.sum('points', {
       where: { user_id: user.id }
@@ -522,6 +570,15 @@ router.post('/ad-reward', async (req, res) => {
         updated_at: getLocalTime()
       });
 
+      // Invalidate episode access cache since new access was created
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.invalidateEpisodeAccessCache(user.id, series_id);
+        console.log('🗑️ Episode access cache invalidated due to new access creation');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+
       // Delete all ad reward records for this user
       await AdReward.destroy({
         where: { user_id: user.id }
@@ -537,6 +594,7 @@ router.post('/ad-reward', async (req, res) => {
         // Invalidate user session cache if device_id is available
         if (deviceId) {
           await apiCache.invalidateUserSession(deviceId);
+          await apiCache.invalidateUserProfileCache(deviceId);
           await apiCache.invalidateUserTransactionsCache(deviceId);
           console.log('🗑️ User caches invalidated due to ad reward episode access');
         }
@@ -634,6 +692,33 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         created_at: getLocalTime()
       });
 
+      // Invalidate bundle cache since new transaction was created
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.invalidateBundleCache();
+        console.log('🗑️ Bundle cache invalidated due to new transaction');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+
+      // Invalidate reward tasks cache since new transaction was created
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.invalidateRewardTasksCache();
+        console.log('🗑️ Reward tasks cache invalidated due to new bundle transaction');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+
+      // Invalidate reward tasks cache since new transaction was created
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.invalidateRewardTasksCache();
+        console.log('🗑️ Reward tasks cache invalidated due to new bundle transaction');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+
       result = {
         type: 'subscription',
         start_date: currentDate,
@@ -668,6 +753,15 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         created_at: getLocalTime()
       });
 
+      // Invalidate bundle cache since new transaction was created
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.invalidateBundleCache();
+        console.log('🗑️ Bundle cache invalidated due to new transaction');
+      } catch (cacheError) {
+        console.error('Cache invalidation error:', cacheError);
+      }
+
       result = {
         type: 'reward_points',
         points_added: pointsToAdd,
@@ -681,6 +775,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
     try {
       const { apiCache } = await import('../config/redis.js');
       await apiCache.invalidateUserSession(deviceId);
+      await apiCache.invalidateUserProfileCache(deviceId);
       await apiCache.invalidateUserTransactionsCache(deviceId);
       console.log('🗑️ User caches invalidated due to episode bundle purchase');
     } catch (cacheError) {

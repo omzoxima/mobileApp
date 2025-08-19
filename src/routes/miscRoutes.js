@@ -133,16 +133,31 @@ router.get('/search', async (req, res) => {
   }
 });
 
-// Profile route without cache
+// Profile route with Redis caching
 router.get('/profile', async (req, res) => {
   const { User, RewardTask, RewardTransaction } = models;
   let t; // Declare transaction outside try block
   
   try {
-    // Initial user fetching without cache
-    let user = null;
     const deviceId = req.headers['x-device-id'];
     const authHeader = req.headers['authorization'];
+    
+    // Try cache first for existing users
+    if (deviceId) {
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        const cachedProfile = await apiCache.getUserProfileCache(deviceId);
+        if (cachedProfile) {
+          console.log('📦 User profile served from cache');
+          return res.json(cachedProfile);
+        }
+      } catch (e) {
+        console.error('Profile cache read error:', e);
+      }
+    }
+    
+    // Initial user fetching without cache
+    let user = null;
     
     if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
@@ -206,9 +221,6 @@ router.get('/profile', async (req, res) => {
         pointsGranted += task.points;
       }
 
-      // Debug log for profile, points, and tasks
-    
-
       if (transactions.length > 0) {
         await user.increment('current_reward_balance', {
           by: pointsGranted,
@@ -219,7 +231,7 @@ router.get('/profile', async (req, res) => {
 
       await t.commit();
 
-      return res.json({
+      const responseData = {
         user: {
           id: user.id,
           name: user.Name,
@@ -233,7 +245,20 @@ router.get('/profile', async (req, res) => {
           app_install_count:user.app_install_count
         },
         pointsGranted
-      });
+      };
+
+      // Cache new user profile for 2 hours
+      if (deviceId) {
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.setUserProfileCache(deviceId, responseData);
+          console.log('💾 New user profile cached for 2 hours');
+        } catch (e) {
+          console.error('Profile cache write error:', e);
+        }
+      }
+
+      return res.json(responseData);
     }
     
     // Existing user logic (no transaction needed for simple read)
@@ -243,7 +268,7 @@ router.get('/profile', async (req, res) => {
       lock = !(today >= user.start_date && today <= user.end_date);
     }
     
-    res.json({
+    const responseData = {
       user: {
         id: user.id,
         name: user.Name,
@@ -255,7 +280,20 @@ router.get('/profile', async (req, res) => {
         phone_or_email: user.phone_or_email
       },
       pointsGranted: 0
-    });
+    };
+
+    // Cache existing user profile for 2 hours
+    if (deviceId) {
+      try {
+        const { apiCache } = await import('../config/redis.js');
+        await apiCache.setUserProfileCache(deviceId, responseData);
+        console.log('💾 Existing user profile cached for 2 hours');
+      } catch (e) {
+        console.error('Profile cache write error:', e);
+      }
+    }
+    
+    res.json(responseData);
     
   } catch (error) {
     if (t) await t.rollback();
@@ -387,7 +425,19 @@ router.post('/episode/access', async (req, res) => {
         await access.save();
       }
       
-      return res.json({ message: `Access ${lock ? 'locked' : 'unlocked'}`, access });
+              // Invalidate user transactions cache since episode access affects user-transaction endpoint
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          const user = await User.findByPk(user_id);
+          if (user && user.device_id) {
+            await apiCache.invalidateUserTransactionsCache(user.device_id);
+            console.log('🗑️ User transactions cache invalidated due to episode access change');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+        
+        return res.json({ message: `Access ${lock ? 'locked' : 'unlocked'}`, access });
     }
 
     // Check if user has active subscription
@@ -407,13 +457,24 @@ router.post('/episode/access', async (req, res) => {
         return res.json({ message: 'Already unlocked', access });
       }
       
-      // If locked, check subscription first, then user points
+              // If locked, check subscription first, then user points
       if (hasActiveSubscription) {
         // Unlock episode using subscription (no point deduction)
         access.is_locked = false;
         access.point = 0; // 0 points for subscription access
         access.updated_at = getLocalTime();
         await access.save();
+        
+        // Invalidate user transactions cache since episode access affects user-transaction endpoint
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (user.device_id) {
+            await apiCache.invalidateUserTransactionsCache(user.device_id);
+            console.log('🗑️ User transactions cache invalidated due to episode access change');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
         
         return res.json({ 
           message: 'Unlocked using subscription', 
@@ -429,6 +490,17 @@ router.post('/episode/access', async (req, res) => {
         access.point = 1; // 1 point for point-based access
         access.updated_at = getLocalTime();
         await access.save();
+        
+        // Invalidate user transactions cache since episode access affects user-transaction endpoint
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (user.device_id) {
+            await apiCache.invalidateUserTransactionsCache(user.device_id);
+            console.log('🗑️ User transactions cache invalidated due to episode access change');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
         
         return res.json({ 
           message: 'Unlocked using points', 
@@ -459,6 +531,17 @@ router.post('/episode/access', async (req, res) => {
           updated_at: getLocalTime()
         });
         
+        // Invalidate user transactions cache since episode access affects user-transaction endpoint
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (user.device_id) {
+            await apiCache.invalidateUserTransactionsCache(user.device_id);
+            console.log('🗑️ User transactions cache invalidated due to episode access change');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+        
         return res.json({ 
           message: 'Unlocked using subscription', 
           access,
@@ -479,6 +562,17 @@ router.post('/episode/access', async (req, res) => {
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
+        
+        // Invalidate user transactions cache since episode access affects user-transaction endpoint
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (user.device_id) {
+            await apiCache.invalidateUserTransactionsCache(user.device_id);
+            console.log('🗑️ User transactions cache invalidated due to episode access change');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
         
         return res.json({ 
           message: 'Unlocked using points', 
@@ -573,14 +667,15 @@ router.post('/action', userContext, async (req, res) => {
         console.log('🗑️ Series caches invalidated due to action:', action);
       }
       
-      if (user_id) {
-        // Invalidate user-related caches
-        const user = await models.User.findByPk(user_id);
-        if (user && user.device_id) {
-          await apiCache.invalidateAllUserCaches(user_id, user.device_id);
-          console.log('🗑️ User caches invalidated due to action:', action);
+              if (user_id) {
+          // Invalidate user-related caches
+          const user = await models.User.findByPk(user_id);
+          if (user && user.device_id) {
+            await apiCache.invalidateAllUserCaches(user_id, user.device_id);
+            await apiCache.invalidateUserTransactionsCache(user.device_id);
+            console.log('🗑️ User caches invalidated due to action:', action);
+          }
         }
-      }
     } catch (cacheError) {
       console.error('Cache invalidation error:', cacheError);
       // Continue with response even if cache invalidation fails
@@ -649,10 +744,20 @@ router.post('/referral', async (req, res) => {
           created_at: getLocalTime()
         });
 
+        // Invalidate reward tasks cache since new transaction was created
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          await apiCache.invalidateRewardTasksCache();
+          console.log('🗑️ Reward tasks cache invalidated due to new referral transaction');
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
+
         // Invalidate user caches
         try {
           const { apiCache } = await import('../config/redis.js');
           await apiCache.invalidateUserSession(referrerUser.device_id);
+          await apiCache.invalidateUserProfileCache(referrerUser.device_id);
           await apiCache.invalidateUserTransactionsCache(referrerUser.device_id);
           console.log('🗑️ Referrer user caches invalidated due to referral reward');
         } catch (cacheError) {

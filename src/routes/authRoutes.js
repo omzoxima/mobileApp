@@ -112,6 +112,15 @@ router.post('/social-login', async (req, res) => {
             created_at: new Date(),
             task_id:loginReward.id
           });
+
+          // Invalidate reward tasks cache since new transaction was created
+          try {
+            const { apiCache } = await import('../config/redis.js');
+            await apiCache.invalidateRewardTasksCache();
+            console.log('🗑️ Reward tasks cache invalidated due to new login transaction');
+          } catch (cacheError) {
+            console.error('Cache invalidation error:', cacheError);
+          }
         }
       }
     }
@@ -122,6 +131,7 @@ router.post('/social-login', async (req, res) => {
       if (deviceId) {
         await apiCache.invalidateUserSession(deviceId);
         await apiCache.invalidateUserProfileCache(deviceId);
+        await apiCache.invalidateUserTransactionsCache(deviceId);
         console.log('🗑️ User caches invalidated due to social login');
       }
     } catch (cacheError) {
@@ -135,7 +145,7 @@ router.post('/social-login', async (req, res) => {
 });
 
 // Route 2: Reward Transaction
-router.post('/reward-transaction', async (req, res) => {
+/*router.post('/reward-transaction', async (req, res) => {
   // Check for JWT or device_id in headers
   const authHeader = req.headers['authorization'];
   const deviceId = req.headers['x-device-id'];
@@ -180,6 +190,7 @@ router.post('/reward-transaction', async (req, res) => {
           if (deviceId) {
             await apiCache.invalidateUserSession(deviceId);
             await apiCache.invalidateUserProfileCache(deviceId);
+            await apiCache.invalidateUserTransactionsCache(deviceId);
             console.log('🗑️ User caches invalidated due to reward transaction');
           }
         } catch (cacheError) {
@@ -214,6 +225,7 @@ router.post('/reward-transaction', async (req, res) => {
           if (deviceId) {
             await apiCache.invalidateUserSession(deviceId);
             await apiCache.invalidateUserProfileCache(deviceId);
+            await apiCache.invalidateUserTransactionsCache(deviceId);
             console.log('🗑️ User caches invalidated due to monthly payment');
           }
         } catch (cacheError) {
@@ -234,7 +246,7 @@ router.post('/reward-transaction', async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
+});*/
 
 // Route 3: Verify JWT and get user details
 router.post('/verify-token', async (req, res) => {

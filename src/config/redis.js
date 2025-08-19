@@ -530,6 +530,14 @@ export const apiCache = {
     }
   },
 
+  // Invalidate ad rewards cache for a specific user
+  async invalidateAdRewardsCache(userId) {
+    const keys = await redisUtils.keys(`ad_rewards:${userId}:*`);
+    for (const key of keys) {
+      await redisUtils.del(key);
+    }
+  },
+
   // Invalidate all series-related caches when series data changes
   async invalidateAllSeriesCaches(seriesId) {
     // Invalidate series cache

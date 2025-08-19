@@ -317,21 +317,31 @@ router.post('/verify-otp', async (req, res) => {
             updated_at: getLocalTime(),
             task_id: loginReward.id
           });
+
+          // Invalidate reward tasks cache since new transaction was created
+          try {
+            const { apiCache } = await import('../config/redis.js');
+            await apiCache.invalidateRewardTasksCache();
+            console.log('🗑️ Reward tasks cache invalidated due to new OTP login transaction');
+          } catch (cacheError) {
+            console.error('Cache invalidation error:', cacheError);
+          }
         }
       }
     }
     
-    // Invalidate user caches after OTP verification
-    try {
-      const { apiCache } = await import('../config/redis.js');
-      if (deviceId) {
-        await apiCache.invalidateUserSession(deviceId);
-        await apiCache.invalidateUserProfileCache(deviceId);
-        console.log('🗑️ User caches invalidated due to OTP verification');
-      }
-    } catch (cacheError) {
-      console.error('Cache invalidation error:', cacheError);
-    }
+            // Invalidate user caches after OTP verification
+        try {
+          const { apiCache } = await import('../config/redis.js');
+          if (deviceId) {
+            await apiCache.invalidateUserSession(deviceId);
+            await apiCache.invalidateUserProfileCache(deviceId);
+            await apiCache.invalidateUserTransactionsCache(deviceId);
+            console.log('🗑️ User caches invalidated due to OTP verification');
+          }
+        } catch (cacheError) {
+          console.error('Cache invalidation error:', cacheError);
+        }
   
     res.json({
       success: true,
