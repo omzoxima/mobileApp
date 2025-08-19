@@ -710,15 +710,6 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         console.error('Cache invalidation error:', cacheError);
       }
 
-      // Invalidate reward tasks cache since new transaction was created
-      try {
-        const { apiCache } = await import('../config/redis.js');
-        await apiCache.invalidateRewardTasksCache();
-        console.log('🗑️ Reward tasks cache invalidated due to new bundle transaction');
-      } catch (cacheError) {
-        console.error('Cache invalidation error:', cacheError);
-      }
-
       result = {
         type: 'subscription',
         start_date: currentDate,
