@@ -35,21 +35,25 @@ async function sendPinnacleSMS(accesskey, obj) {
       headers: { 
         'Content-Type': 'application/json'
       },
-      data: data
+      data: data,
+      timeout: 30000, // 30 seconds timeout
+      maxRedirects: 5
     };
     
     // Print cURL command for debugging
-    const curlCommand = `curl -X POST ${config.url} \\
-      -H "Content-Type: application/json" \\
-      -d '${data}'`;
-    
-    console.log('📱 Pinnacle SMS API cURL Command:');
-    console.log(curlCommand);
-    console.log('📱 Pinnacle SMS API Request Data:', data);
+ 
     
     const response = await axios(config);
     return response.data;
   } catch (error) {
+    console.error('📱 Pinnacle SMS API Error Details:', {
+      message: error.message,
+      code: error.code,
+      hostname: error.hostname,
+      port: error.port,
+      syscall: error.syscall,
+      stack: error.stack
+    });
     throw error;
   }
 }
@@ -357,6 +361,38 @@ router.post('/verify-otp', async (req, res) => {
   }
 });
 
+// Test endpoint to check external API connectivity
+router.get('/test-connectivity', async (req, res) => {
+  try {
+    console.log('🔍 Testing connectivity to external APIs...');
+    
+    // Test 1: Basic HTTP request
+    const testResponse = await axios.get('https://httpbin.org/get', { timeout: 10000 });
+    console.log('✅ Basic HTTP connectivity test passed');
+    
+    // Test 2: Test Pinnacle API connectivity
+    try {
+      const pinnacleTest = await axios.get('https://transapi.pinnacle.in', { timeout: 10000 });
+      console.log('✅ Pinnacle API connectivity test passed');
+    } catch (pinnacleError) {
+      console.log('❌ Pinnacle API connectivity test failed:', pinnacleError.message);
+    }
+    
+    res.json({
+      success: true,
+      message: 'Connectivity tests completed',
+      basicHttp: 'PASSED',
+      pinnacleApi: 'TESTED'
+    });
+    
+  } catch (error) {
+    console.error('❌ Connectivity test failed:', error.message);
+    res.status(500).json({
+      error: 'Connectivity test failed',
+      details: error.message
+    });
+  }
+});
 
 
 export default router; 
