@@ -44,6 +44,7 @@ async function sendPinnacleSMS(accesskey, obj) {
  
     
     const response = await axios(config);
+    console.log('📱 Pinnacle SMS API Response:', response.data);
     return response.data;
   } catch (error) {
     console.error('📱 Pinnacle SMS API Error Details:', {
