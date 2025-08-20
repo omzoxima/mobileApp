@@ -38,8 +38,14 @@ async function sendPinnacleSMS(accesskey, obj) {
       data: data
     };
     
-    // Print cURL command
-  //
+    // Print cURL command for debugging
+    const curlCommand = `curl -X POST ${config.url} \\
+      -H "Content-Type: application/json" \\
+      -d '${data}'`;
+    
+    console.log('📱 Pinnacle SMS API cURL Command:');
+    console.log(curlCommand);
+    console.log('📱 Pinnacle SMS API Request Data:', data);
     
     const response = await axios(config);
     return response.data;
@@ -87,7 +93,8 @@ function formatMobileNumber(mobileNumber, countryCode = '91') {
  * @returns {string} - 6-digit OTP
  */
 function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  //return Math.floor(100000 + Math.random() * 900000).toString();
+  return '123456';
 }
 
 
