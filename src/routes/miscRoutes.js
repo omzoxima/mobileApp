@@ -252,7 +252,9 @@ router.get('/profile', async (req, res) => {
         lock,
         start_date: user.start_date,
         end_date: user.end_date,
-        phone_or_email: user.phone_or_email
+        phone_or_email: user.phone_or_email,
+        referral_code: user.referral_code,
+        app_install_count: user.app_install_count
       },
       pointsGranted: 0
     });
