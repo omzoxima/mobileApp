@@ -3,12 +3,10 @@
   "version": "1.0.0",
   "description": "Video streaming application with Azure CDN and PostgreSQL",
   "main": "src/index.js",
-  "scripts": {
+    "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "load-test:heavy": "node heavy-load-test.js",
-    "load-test:heavy-quick": "node quick-heavy-test.js",
-    "load-test:ultra-heavy": "node ultra-heavy-load-test.js"
+    "load-test:1000-users": "node load-test-1000-users.js"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

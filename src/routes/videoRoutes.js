@@ -358,7 +358,7 @@ router.get('/episode-bundles', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
+/*router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
   try {
     const { episodeId, language } = req.params;
     const deviceId = req.headers['x-device-id'];
@@ -455,9 +455,9 @@ router.get("/signedcookie/:episodeId/:language", async (req, res, next) => {
     res.status(500).send({ status: 0, message: error })
   }
 
-})
+})*/
 
-router.get('/episodes/:Id/hls-url1', async (req, res) => {
+/*router.get('/episodes/:Id/hls-url1', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
@@ -540,13 +540,13 @@ router.get('/episodes/:Id/hls-url1', async (req, res) => {
     console.error('Signed cookie generation failure:', e);
     return res.status(500).json({ error: 'sign failure', details: e.message });
   }
-});
+});*/
 
 
 
 // HLS Signer Route - Based on server.js functionality
 
-router.get('/episodes/:Id/hls-url', async (req, res) => {
+/*router.get('/episodes/:Id/hls-url', async (req, res) => {
   try {
     const { Id } = req.params;
     const { lang } = req.query;
@@ -647,7 +647,7 @@ router.get('/episodes/:Id/hls-url', async (req, res) => {
     console.error('Sign failure:', e);
     return res.status(500).json({ error: 'sign failure', details: e.message });
   }
-});
+});*/
 
 
 
