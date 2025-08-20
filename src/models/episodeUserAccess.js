@@ -31,6 +31,10 @@ export default (sequelize) => {
     updated_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
+    },
+    point: {
+      type: DataTypes.INTEGER,
+      defaultValue: 0
     }
   }, {
     tableName: 'episode_user_access',

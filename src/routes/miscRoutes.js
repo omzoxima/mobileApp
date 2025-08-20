@@ -373,17 +373,23 @@ router.post('/episode/access', async (req, res) => {
     if (typeof lock === 'boolean') {
       let access = await EpisodeUserAccess.findOne({ where: { episode_id, user_id } });
       if (!access) {
+        // Determine point value based on subscription
+        //const pointValue = hasActiveSubscription ? 0 : -1;
+        
         access = await EpisodeUserAccess.create({
           id: uuidv4(),
           episode_id,
           series_id,
           user_id,
           is_locked: lock,
+          point: -1,
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
       } else {
         access.is_locked = lock;
+        // Update point value based on subscription
+        access.point =-1;
         access.updated_at = getLocalTime();
         await access.save();
       }
@@ -410,8 +416,9 @@ router.post('/episode/access', async (req, res) => {
       
       // If locked, check subscription first, then user points
       if (hasActiveSubscription) {
-        // Unlock episode using subscription (no point deduction)
+        // Unlock episode using subscription (point = 0)
         access.is_locked = false;
+        access.point = 0; // Subscription access = 0 points
         access.updated_at = getLocalTime();
         await access.save();
         
@@ -419,13 +426,15 @@ router.post('/episode/access', async (req, res) => {
           message: 'Unlocked using subscription', 
           access,
           subscription_used: true,
-          points_deducted: 0
+          points_deducted: 0,
+          point: 0
         });
       } else if (user.current_reward_balance > 0) {
         // Unlock episode using points
         user.current_reward_balance -= 1;
         await user.save();
         access.is_locked = false;
+        access.point = -1; // Points access = -1 points
         access.updated_at = getLocalTime();
         await access.save();
         
@@ -433,7 +442,8 @@ router.post('/episode/access', async (req, res) => {
           message: 'Unlocked using points', 
           access,
           subscription_used: false,
-          points_deducted: 1
+          points_deducted: 1,
+          point: -1
         });
       } else {
         return res.json({ 
@@ -446,13 +456,14 @@ router.post('/episode/access', async (req, res) => {
     } else {
       // No record exists, check subscription first, then user points
       if (hasActiveSubscription) {
-        // Create access record and unlock using subscription (no point deduction)
+        // Create access record and unlock using subscription (point = 0)
         access = await EpisodeUserAccess.create({
           id: uuidv4(),
           episode_id,
           series_id,
           user_id,
           is_locked: false,
+          point: 0, // Subscription access = 0 points
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
@@ -461,7 +472,8 @@ router.post('/episode/access', async (req, res) => {
           message: 'Unlocked using subscription', 
           access,
           subscription_used: true,
-          points_deducted: 0
+          points_deducted: 0,
+          point: 0
         });
       } else if (user.current_reward_balance > 0) {
         // Create access record and unlock using points
@@ -473,6 +485,7 @@ router.post('/episode/access', async (req, res) => {
           series_id,
           user_id,
           is_locked: false,
+          point: -1, // Points access = -1 points
           created_at: getLocalTime(),
           updated_at: getLocalTime()
         });
@@ -481,7 +494,8 @@ router.post('/episode/access', async (req, res) => {
           message: 'Unlocked using points', 
           access,
           subscription_used: false,
-          points_deducted: 1
+          points_deducted: 1,
+          point: -1
         });
       } else {
         access = [];
