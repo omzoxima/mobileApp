@@ -1,19 +1,17 @@
 import axios from 'axios';
 import { performance } from 'perf_hooks';
 import fs from 'fs';
-import path from 'path';
 
 // Configuration
 const CONFIG = {
-  BASE_URL: process.env.BASE_URL || 'https://tuktukiapp-dev-219733694412.asia-south1.run.app',
+  BASE_URL: 'https://tuktukiapp-dev-219733694412.asia-south1.run.app',
   TOTAL_USERS: 30000,
-  CONCURRENT_USERS: 1000, // Adjust based on your server capacity
-  DELAY_BETWEEN_REQUESTS: 100, // ms
-  TEST_DURATION: 300000, // 5 minutes
-  OUTPUT_FILE: 'load-test-30000-report.json'
+  CONCURRENT_USERS: 500, // Reduced for better server handling
+  DELAY_BETWEEN_BATCHES: 200, // ms
+  OUTPUT_FILE: 'load-test-30000-final-report.json'
 };
 
-// Test data generators
+// Test data generator
 class TestDataGenerator {
   static generateMobileNumber() {
     const prefixes = ['6', '7', '8', '9'];
@@ -23,7 +21,7 @@ class TestDataGenerator {
   }
 
   static generateDeviceId() {
-    return `device_${Math.random().toString(36).substr(2, 9)}_${Date.now()}`;
+    return `device_${Math.random().toString(36).substr(2, 9)}_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
   }
 
   static generateUserData() {
@@ -34,55 +32,33 @@ class TestDataGenerator {
       device_id: this.generateDeviceId()
     };
   }
-
-  static generateVideoData() {
-    const categories = ['action', 'comedy', 'drama', 'thriller', 'romance'];
-    return {
-      title: `Video_${Math.random().toString(36).substr(2, 8)}`,
-      category: categories[Math.floor(Math.random() * categories.length)],
-      duration: Math.floor(Math.random() * 120) + 30
-    };
-  }
 }
 
-// Test scenarios
-class TestScenarios {
+// API test scenarios using ONLY existing routes
+class APITestScenarios {
   constructor(baseUrl) {
     this.baseUrl = baseUrl;
-    this.authTokens = new Map();
-    this.userSessions = new Map();
+    this.userSessions = new Map(); // device_id -> user data
   }
 
-  async sendOTP(userData) {
+  // Step 1: Create user profile with device ID via OTP
+  async createUserProfile(userData) {
     try {
       const startTime = performance.now();
-      const response = await axios.post(`${this.baseUrl}/api/sms/send-otp`, {
+      
+      // First send OTP
+      const otpResponse = await axios.post(`${this.baseUrl}/api/sms/send-otp`, {
         mobile: userData.mobile
       });
-      const endTime = performance.now();
-      
-      return {
-        success: response.status === 200,
-        responseTime: endTime - startTime,
-        statusCode: response.status,
-        data: response.data,
-        error: null
-      };
-    } catch (error) {
-      return {
-        success: false,
-        responseTime: 0,
-        statusCode: error.response?.status || 0,
-        data: null,
-        error: error.message
-      };
-    }
-  }
 
-  async verifyOTP(userData, otp) {
-    try {
-      const startTime = performance.now();
-      const response = await axios.post(`${this.baseUrl}/api/sms/verify-otp`, {
+      if (otpResponse.status !== 200) {
+        throw new Error(`OTP send failed: ${otpResponse.status}`);
+      }
+
+      const otp = otpResponse.data.data;
+      
+      // Then verify OTP and create user
+      const verifyResponse = await axios.post(`${this.baseUrl}/api/sms/verify-otp`, {
         mobile: userData.mobile,
         otp: otp
       }, {
@@ -90,13 +66,57 @@ class TestScenarios {
           'x-device-id': userData.device_id
         }
       });
+
       const endTime = performance.now();
       
-      if (response.data.token) {
-        this.authTokens.set(userData.mobile, response.data.token);
-        this.userSessions.set(userData.mobile, response.data.user);
+      if (verifyResponse.status === 200 && verifyResponse.data.user) {
+        // Store user session
+        this.userSessions.set(userData.device_id, {
+          ...verifyResponse.data.user,
+          token: verifyResponse.data.token,
+          device_id: userData.device_id
+        });
+
+        return {
+          success: true,
+          responseTime: endTime - startTime,
+          statusCode: verifyResponse.status,
+          user: verifyResponse.data.user,
+          token: verifyResponse.data.token,
+          error: null
+        };
+      } else {
+        throw new Error('User creation failed');
       }
-      
+    } catch (error) {
+      return {
+        success: false,
+        responseTime: 0,
+        statusCode: error.response?.status || 0,
+        user: null,
+        token: null,
+        error: error.message
+      };
+    }
+  }
+
+  // Step 2: Test reward tasks API (EXISTS: /api/task/reward_task)
+  async testRewardTasks(deviceId) {
+    try {
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
+      }
+
+      const startTime = performance.now();
+      const response = await axios.get(`${this.baseUrl}/api/task/reward_task`, {
+        headers: {
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
+        }
+      });
+      const endTime = performance.now();
+
       return {
         success: response.status === 200,
         responseTime: endTime - startTime,
@@ -115,22 +135,23 @@ class TestScenarios {
     }
   }
 
-  async getRewardTasks(userData) {
+  // Step 3: Test user transactions API (EXISTS: /api/task/user-transaction)
+  async testUserTransactions(deviceId) {
     try {
-      const token = this.authTokens.get(userData.mobile);
-      if (!token) {
-        return { success: false, error: 'No auth token' };
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
       }
 
       const startTime = performance.now();
-      const response = await axios.get(`${this.baseUrl}/api/task/reward-tasks`, {
+      const response = await axios.get(`${this.baseUrl}/api/task/user-transaction`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-device-id': userData.device_id
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
         }
       });
       const endTime = performance.now();
-      
+
       return {
         success: response.status === 200,
         responseTime: endTime - startTime,
@@ -149,22 +170,23 @@ class TestScenarios {
     }
   }
 
-  async getVideos(userData) {
+  // Step 4: Test series API (EXISTS: /api/series)
+  async testSeries(deviceId) {
     try {
-      const token = this.authTokens.get(userData.mobile);
-      if (!token) {
-        return { success: false, error: 'No auth token' };
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
       }
 
       const startTime = performance.now();
-      const response = await axios.get(`${this.baseUrl}/api/videos`, {
+      const response = await axios.get(`${this.baseUrl}/api/series`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-device-id': userData.device_id
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
         }
       });
       const endTime = performance.now();
-      
+
       return {
         success: response.status === 200,
         responseTime: endTime - startTime,
@@ -183,22 +205,163 @@ class TestScenarios {
     }
   }
 
-  async getMiscData(userData) {
+  // Step 5: Test episodes API (EXISTS: /api/episodes)
+  async testEpisodes(deviceId) {
     try {
-      const token = this.authTokens.get(userData.mobile);
-      if (!token) {
-        return { success: false, error: 'No auth token' };
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
       }
 
       const startTime = performance.now();
-      const response = await axios.get(`${this.baseUrl}/api/static-content`, {
+      const response = await axios.get(`${this.baseUrl}/api/episodes`, {
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'x-device-id': userData.device_id
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
         }
       });
       const endTime = performance.now();
-      
+
+      return {
+        success: response.status === 200,
+        responseTime: endTime - startTime,
+        statusCode: response.status,
+        data: response.data,
+        error: null
+      };
+    } catch (error) {
+      return {
+        success: false,
+        responseTime: 0,
+        statusCode: error.response?.status || 0,
+        data: null,
+        error: error.message
+      };
+    }
+  }
+
+  // Step 6: Test user profile API (EXISTS: /api/profile)
+  async testUserProfile(deviceId) {
+    try {
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
+      }
+
+      const startTime = performance.now();
+      const response = await axios.get(`${this.baseUrl}/api/profile`, {
+        headers: {
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
+        }
+      });
+      const endTime = performance.now();
+
+      return {
+        success: response.status === 200,
+        responseTime: endTime - startTime,
+        statusCode: response.status,
+        data: response.data,
+        error: null
+      };
+    } catch (error) {
+      return {
+        success: false,
+        responseTime: 0,
+        statusCode: error.response?.status || 0,
+        data: null,
+        error: error.message
+      };
+    }
+  }
+
+  // Step 7: Test search API (EXISTS: /api/search)
+  async testSearch(deviceId) {
+    try {
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
+      }
+
+      const startTime = performance.now();
+      const response = await axios.get(`${this.baseUrl}/api/search?q=test`, {
+        headers: {
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
+        }
+      });
+      const endTime = performance.now();
+
+      return {
+        success: response.status === 200,
+        responseTime: endTime - startTime,
+        statusCode: response.status,
+        data: response.data,
+        error: null
+      };
+    } catch (error) {
+      return {
+        success: false,
+        responseTime: 0,
+        statusCode: error.response?.status || 0,
+        data: null,
+        error: error.message
+      };
+    }
+  }
+
+  // Step 8: Test about us static content API (EXISTS: /api/static/about-us)
+  async testAboutUs(deviceId) {
+    try {
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
+      }
+
+      const startTime = performance.now();
+      const response = await axios.get(`${this.baseUrl}/api/static/about-us`, {
+        headers: {
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
+        }
+      });
+      const endTime = performance.now();
+
+      return {
+        success: response.status === 200,
+        responseTime: endTime - startTime,
+        statusCode: response.status,
+        data: response.data,
+        error: null
+      };
+    } catch (error) {
+      return {
+        success: false,
+        responseTime: 0,
+        statusCode: error.response?.status || 0,
+        data: null,
+        error: error.message
+      };
+    }
+  }
+
+  // Step 9: Test episode bundles API (EXISTS: /api/episode-bundles)
+  async testEpisodeBundles(deviceId) {
+    try {
+      const userSession = this.userSessions.get(deviceId);
+      if (!userSession || !userSession.token) {
+        return { success: false, error: 'No valid user session' };
+      }
+
+      const startTime = performance.now();
+      const response = await axios.get(`${this.baseUrl}/api/episode-bundles`, {
+        headers: {
+          'Authorization': `Bearer ${userSession.token}`,
+          'x-device-id': deviceId
+        }
+      });
+      const endTime = performance.now();
+
       return {
         success: response.status === 200,
         responseTime: endTime - startTime,
@@ -220,11 +383,14 @@ class TestScenarios {
 
 // Load Test Runner
 class LoadTestRunner {
-  constructor(config) {
-    this.config = config;
+  constructor() {
+    this.config = CONFIG;
     this.results = {
       startTime: null,
       endTime: null,
+      totalUsers: 0,
+      successfulUsers: 0,
+      failedUsers: 0,
       totalRequests: 0,
       successfulRequests: 0,
       failedRequests: 0,
@@ -235,10 +401,10 @@ class LoadTestRunner {
       statusCodeDistribution: {},
       endpointPerformance: {},
       errors: [],
-      userFlowResults: []
+      userFlowResults: [],
+      apiDataSamples: {}
     };
-    this.testScenarios = new TestScenarios(config.BASE_URL);
-    this.currentUsers = 0;
+    this.testScenarios = new APITestScenarios(this.config.BASE_URL);
     this.isRunning = false;
   }
 
@@ -248,64 +414,101 @@ class LoadTestRunner {
       deviceId: userData.device_id,
       steps: [],
       totalTime: 0,
-      success: true
+      success: true,
+      finalUserData: null
     };
 
     const startTime = performance.now();
 
-    // Step 1: Send OTP
-    const otpResult = await this.testScenarios.sendOTP(userData);
+    // Step 1: Create user profile
+    console.log(`👤 Creating user profile for ${userData.mobile}...`);
+    const profileResult = await this.testScenarios.createUserProfile(userData);
     userFlow.steps.push({
-      step: 'send_otp',
-      ...otpResult
+      step: 'create_user_profile',
+      ...profileResult
     });
 
-    if (!otpResult.success) {
+    if (!profileResult.success) {
       userFlow.success = false;
       userFlow.totalTime = performance.now() - startTime;
       return userFlow;
     }
 
-    // Step 2: Verify OTP (using the OTP from response)
-    const otp = otpResult.data?.data || '123456'; // Fallback OTP
-    const verifyResult = await this.testScenarios.verifyOTP(userData, otp);
-    userFlow.steps.push({
-      step: 'verify_otp',
-      ...verifyResult
-    });
+    // Store user data for API testing
+    userFlow.finalUserData = profileResult.user;
+    console.log(`✅ User created: ${profileResult.user.id}`);
 
-    if (!verifyResult.success) {
-      userFlow.success = false;
-      userFlow.totalTime = performance.now() - startTime;
-      return userFlow;
-    }
-
-    // Step 3: Get Reward Tasks
-    const rewardResult = await this.testScenarios.getRewardTasks(userData);
+    // Step 2: Test reward tasks
+    console.log(`🎯 Testing reward tasks for ${userData.device_id}...`);
+    const rewardResult = await this.testScenarios.testRewardTasks(userData.device_id);
     userFlow.steps.push({
-      step: 'get_reward_tasks',
+      step: 'reward_tasks',
       ...rewardResult
     });
 
-    // Step 4: Get Videos
-    const videoResult = await this.testScenarios.getVideos(userData);
+    // Step 3: Test user transactions
+    console.log(`💰 Testing user transactions for ${userData.device_id}...`);
+    const transactionResult = await this.testScenarios.testUserTransactions(userData.device_id);
     userFlow.steps.push({
-      step: 'get_videos',
-      ...videoResult
+      step: 'user_transactions',
+      ...transactionResult
     });
 
-    // Step 5: Get Misc Data
-    const miscResult = await this.testScenarios.getMiscData(userData);
+    // Step 4: Test series
+    console.log(`📺 Testing series for ${userData.device_id}...`);
+    const seriesResult = await this.testScenarios.testSeries(userData.device_id);
     userFlow.steps.push({
-      step: 'get_misc_data',
-      ...miscResult
+      step: 'series',
+      ...seriesResult
+    });
+
+    // Step 5: Test episodes
+    console.log(`🎭 Testing episodes for ${userData.device_id}...`);
+    const episodeResult = await this.testScenarios.testEpisodes(userData.device_id);
+    userFlow.steps.push({
+      step: 'episodes',
+      ...episodeResult
+    });
+
+    // Step 6: Test user profile
+    console.log(`👤 Testing user profile for ${userData.device_id}...`);
+    const userProfileResult = await this.testScenarios.testUserProfile(userData.device_id);
+    userFlow.steps.push({
+      step: 'user_profile',
+      ...userProfileResult
+    });
+
+    // Step 7: Test search
+    console.log(`🔍 Testing search for ${userData.device_id}...`);
+    const searchResult = await this.testScenarios.testSearch(userData.device_id);
+    userFlow.steps.push({
+      step: 'search',
+      ...searchResult
+    });
+
+    // Step 8: Test about us
+    console.log(`📄 Testing about us for ${userData.device_id}...`);
+    const aboutResult = await this.testScenarios.testAboutUs(userData.device_id);
+    userFlow.steps.push({
+      step: 'about_us',
+      ...aboutResult
+    });
+
+    // Step 9: Test episode bundles
+    console.log(`📦 Testing episode bundles for ${userData.device_id}...`);
+    const bundleResult = await this.testScenarios.testEpisodeBundles(userData.device_id);
+    userFlow.steps.push({
+      step: 'episode_bundles',
+      ...bundleResult
     });
 
     userFlow.totalTime = performance.now() - startTime;
+    console.log(`🎉 User flow completed for ${userData.device_id} in ${userFlow.totalTime.toFixed(2)}ms`);
+    
     return userFlow;
   }
 
-  async runConcurrentUsers(userCount) {
+  async runBatch(userCount) {
     const users = Array.from({ length: userCount }, () => TestDataGenerator.generateUserData());
     const promises = users.map(userData => this.runUserFlow(userData));
     
@@ -315,6 +518,13 @@ class LoadTestRunner {
 
   updateResults(userFlowResults) {
     userFlowResults.forEach(userFlow => {
+      if (userFlow.success) {
+        this.results.successfulUsers++;
+      } else {
+        this.results.failedUsers++;
+      }
+
+      this.results.totalUsers++;
       this.results.totalRequests += userFlow.steps.length;
       
       userFlow.steps.forEach(step => {
@@ -328,11 +538,20 @@ class LoadTestRunner {
           if (step.responseTime > this.results.maxResponseTime) {
             this.results.maxResponseTime = step.responseTime;
           }
+
+          // Store sample data from successful API calls
+          if (step.data && !this.results.apiDataSamples[step.step]) {
+            this.results.apiDataSamples[step.step] = {
+              sample: step.data,
+              timestamp: new Date().toISOString()
+            };
+          }
         } else {
           this.results.failedRequests++;
           if (step.error) {
             this.results.errors.push({
               userId: userFlow.userId,
+              deviceId: userFlow.deviceId,
               step: step.step,
               error: step.error
             });
@@ -390,12 +609,14 @@ class LoadTestRunner {
 
     this.isRunning = true;
     this.results.startTime = new Date();
-    console.log(`🚀 Starting load test for ${this.config.TOTAL_USERS} users`);
-    console.log(`📊 Base URL: ${this.config.BASE_URL}`);
-    console.log(`⚡ Concurrent users: ${this.config.CONCURRENT_USERS}`);
-    console.log(`⏱️  Test duration: ${this.config.TEST_DURATION / 1000} seconds`);
+    
+    console.log('🚀 Starting 30,000 User Load Test');
+    console.log(`📊 Target Server: ${this.config.BASE_URL}`);
+    console.log(`👥 Total Users: ${this.config.TOTAL_USERS}`);
+    console.log(`⚡ Concurrent Users: ${this.config.CONCURRENT_USERS} users per batch`);
+    console.log(`⏱️  Start Time: ${this.results.startTime.toLocaleString()}`);
+    console.log(`🔗 Testing Routes: /api/sms/*, /api/task/*, /api/series, /api/episodes, /api/profile, /api/search, /api/static/*, /api/episode-bundles`);
 
-    const startTime = performance.now();
     let processedUsers = 0;
 
     while (processedUsers < this.config.TOTAL_USERS && this.isRunning) {
@@ -404,26 +625,23 @@ class LoadTestRunner {
       
       console.log(`\n📦 Processing batch ${Math.floor(processedUsers / this.config.CONCURRENT_USERS) + 1}: ${batchSize} users`);
       
-      const batchResults = await this.runConcurrentUsers(batchSize);
+      const batchResults = await this.runBatch(batchSize);
       this.updateResults(batchResults);
       
       processedUsers += batchSize;
       const progress = ((processedUsers / this.config.TOTAL_USERS) * 100).toFixed(2);
       
       console.log(`✅ Batch completed. Progress: ${progress}% (${processedUsers}/${this.config.TOTAL_USERS})`);
-      console.log(`📈 Successful requests: ${this.results.successfulRequests}`);
-      console.log(`❌ Failed requests: ${this.results.failedRequests}`);
-      console.log(`⏱️  Average response time: ${this.results.averageResponseTime.toFixed(2)}ms`);
+      console.log(`👥 Successful Users: ${this.results.successfulUsers}`);
+      console.log(`❌ Failed Users: ${this.results.failedUsers}`);
+      console.log(`📈 Successful Requests: ${this.results.successfulRequests}`);
+      console.log(`❌ Failed Requests: ${this.results.failedRequests}`);
+      console.log(`⏱️  Average Response Time: ${this.results.averageResponseTime.toFixed(2)}ms`);
       
-      // Check if we've exceeded test duration
-      if (performance.now() - startTime > this.config.TEST_DURATION) {
-        console.log('⏰ Test duration exceeded, stopping...');
-        break;
-      }
-
       // Add delay between batches
       if (processedUsers < this.config.TOTAL_USERS) {
-        await new Promise(resolve => setTimeout(resolve, this.config.DELAY_BETWEEN_REQUESTS));
+        console.log(`⏳ Waiting ${this.config.DELAY_BETWEEN_BATCHES}ms before next batch...`);
+        await new Promise(resolve => setTimeout(resolve, this.config.DELAY_BETWEEN_BATCHES));
       }
     }
 
@@ -437,20 +655,24 @@ class LoadTestRunner {
 
   printSummary() {
     console.log('\n📊 LOAD TEST SUMMARY');
-    console.log('='.repeat(50));
+    console.log('='.repeat(60));
     console.log(`Start Time: ${this.results.startTime}`);
     console.log(`End Time: ${this.results.endTime}`);
-    console.log(`Total Duration: ${(this.results.endTime - this.results.startTime) / 1000} seconds`);
+    console.log(`Total Duration: ${(this.results.endTime - this.startTime) / 1000} seconds`);
+    console.log(`Total Users: ${this.results.totalUsers}`);
+    console.log(`Successful Users: ${this.results.successfulUsers}`);
+    console.log(`Failed Users: ${this.results.failedUsers}`);
+    console.log(`User Success Rate: ${((this.results.successfulUsers / this.results.totalUsers) * 100).toFixed(2)}%`);
     console.log(`Total Requests: ${this.results.totalRequests}`);
     console.log(`Successful Requests: ${this.results.successfulRequests}`);
     console.log(`Failed Requests: ${this.results.failedRequests}`);
-    console.log(`Success Rate: ${((this.results.successfulRequests / this.results.totalRequests) * 100).toFixed(2)}%`);
+    console.log(`Request Success Rate: ${((this.results.successfulRequests / this.results.totalRequests) * 100).toFixed(2)}%`);
     console.log(`Average Response Time: ${this.results.averageResponseTime.toFixed(2)}ms`);
     console.log(`Min Response Time: ${this.results.minResponseTime.toFixed(2)}ms`);
     console.log(`Max Response Time: ${this.results.maxResponseTime.toFixed(2)}ms`);
     
     console.log('\n📈 ENDPOINT PERFORMANCE');
-    console.log('-'.repeat(30));
+    console.log('-'.repeat(40));
     Object.entries(this.results.endpointPerformance).forEach(([endpoint, stats]) => {
       const successRate = ((stats.successfulRequests / stats.totalRequests) * 100).toFixed(2);
       console.log(`${endpoint}:`);
@@ -460,7 +682,7 @@ class LoadTestRunner {
     });
 
     console.log('\n🔍 STATUS CODE DISTRIBUTION');
-    console.log('-'.repeat(30));
+    console.log('-'.repeat(40));
     Object.entries(this.results.statusCodeDistribution)
       .sort(([a], [b]) => parseInt(a) - parseInt(b))
       .forEach(([statusCode, count]) => {
@@ -470,7 +692,7 @@ class LoadTestRunner {
 
     if (this.results.errors.length > 0) {
       console.log('\n❌ TOP ERRORS');
-      console.log('-'.repeat(20));
+      console.log('-'.repeat(30));
       const errorCounts = {};
       this.results.errors.forEach(error => {
         const key = `${error.step}: ${error.error}`;
@@ -484,6 +706,14 @@ class LoadTestRunner {
           console.log(`${error}: ${count} occurrences`);
         });
     }
+
+    console.log('\n📊 API DATA SAMPLES');
+    console.log('-'.repeat(30));
+    Object.entries(this.results.apiDataSamples).forEach(([endpoint, data]) => {
+      console.log(`${endpoint}:`);
+      console.log(`  Sample data captured at: ${data.timestamp}`);
+      console.log(`  Data structure: ${JSON.stringify(data.sample).substring(0, 100)}...`);
+    });
   }
 
   saveResults() {
@@ -504,13 +734,13 @@ class LoadTestRunner {
 // Main execution
 async function main() {
   try {
-    // Validate environment
-    if (!process.env.BASE_URL) {
-      console.log('⚠️  BASE_URL not set, using default: http://localhost:8080');
-      console.log('💡 Set BASE_URL environment variable to test against your server');
-    }
-
-    const runner = new LoadTestRunner(CONFIG);
+    console.log('🚀 Starting 30,000 User Load Test against Tuktuki App Server');
+    console.log(`📍 Server: ${CONFIG.BASE_URL}`);
+    console.log(`👥 Target: ${CONFIG.TOTAL_USERS} users`);
+    console.log(`⚡ Concurrency: ${CONFIG.CONCURRENT_USERS} users per batch`);
+    console.log(`🔗 Testing ONLY existing routes from your codebase`);
+    
+    const runner = new LoadTestRunner();
     
     // Handle graceful shutdown
     process.on('SIGINT', () => {
@@ -538,4 +768,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main();
 }
 
-export { LoadTestRunner, TestScenarios, TestDataGenerator };
+export { LoadTestRunner, APITestScenarios, TestDataGenerator };
