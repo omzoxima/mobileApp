@@ -8,7 +8,7 @@ import jwt from 'jsonwebtoken';
 import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
 import { generateUniqueReferralCode } from '../utils/referralCodeGenerator.js';
 
-const { Series, Episode, User, StaticContent, Wishlist, OTP } = models;
+const { Series, Episode, User, StaticContent, Wishlist, OTP, Category } = models;
 const router = express.Router();
 
 // Helper function to get local time instead of GMT
@@ -703,6 +703,167 @@ router.post('/referral', async (req, res) => {
   } catch (error) {
     console.error('Referral error:', error);
     res.status(500).json({ error: error.message || 'Failed to process referral' });
+  }
+});
+
+// GET /api/carousel-series - Get popular series for carousel with categories
+router.get('/carousel-series', async (req, res) => {
+  try {
+    // Get popular series with category information
+    const popularSeries = await Series.findAll({
+      where: {
+        is_popular: true,
+        status: 'Active',
+        is_published: true
+      },
+      include: [{
+        model: Category,
+        attributes: ['id', 'name'],
+        required: true // Only include categories that have series
+      }],
+      attributes: [
+        'id', 
+        'title', 
+        'carousel_image_url',
+        'category_id',
+        'created_at',
+        'updated_at'
+      ],
+      order: [['created_at', 'DESC']],
+      limit: 5
+    });
+
+    // Process series data and generate CDN URLs
+    const processedSeries = popularSeries.map(series => {
+      const seriesData = series.toJSON();
+      
+      // Generate CDN signed URL for carousel image
+      if (seriesData.carousel_image_url) {
+        seriesData.carousel_image_url = generateCdnSignedUrlForThumbnail(seriesData.carousel_image_url);
+      }
+      
+      return seriesData;
+    });
+
+    // Get unique categories that have series
+    const categoriesWithSeries = await Category.findAll({
+      include: [{
+        model: Series,
+        where: {
+          status: 'Active',
+          is_published: true
+        },
+        required: true,
+        attributes: [] // Don't include series data, just check existence
+      }],
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']]
+    });
+
+    const response = {
+      carousel_series: processedSeries,
+      categories: categoriesWithSeries.map(cat => ({
+        id: cat.id,
+        name: cat.name
+      })),
+      total_series: processedSeries.length,
+      total_categories: categoriesWithSeries.length,
+      cached_at: new Date().toISOString()
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Carousel series error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch carousel series' });
+  }
+});
+
+// GET /api/series-by-category/:categoryId - Get series by category with pagination
+router.get('/series-by-category/:categoryId', async (req, res) => {
+  try {
+    const { categoryId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+    
+    // Validate category ID format
+    const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidV4Regex.test(categoryId)) {
+      return res.status(400).json({ error: 'Invalid category ID format' });
+    }
+
+    // Validate pagination parameters
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    
+    if (pageNum < 1 || limitNum < 1 || limitNum > 50) {
+      return res.status(400).json({ 
+        error: 'Invalid pagination parameters. Page must be >= 1, limit must be between 1-50' 
+      });
+    }
+
+    // Check if category exists
+    const category = await Category.findByPk(categoryId);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found' });
+    }
+
+    // Get series for the category with pagination
+    const { count, rows } = await Series.findAndCountAll({
+      where: {
+        category_id: categoryId,
+        status: 'Active',
+        is_published: true
+      },
+      attributes: [
+        'id', 
+        'title', 
+        'thumbnail_url',
+        'created_at',
+        'updated_at'
+      ],
+      order: [['created_at', 'DESC']],
+      offset: (pageNum - 1) * limitNum,
+      limit: limitNum
+    });
+
+    // Process series data and generate CDN URLs
+    const processedSeries = rows.map(series => {
+      const seriesData = series.toJSON();
+      
+      // Generate CDN signed URL for thumbnail
+      if (seriesData.thumbnail_url) {
+        seriesData.thumbnail_url = generateCdnSignedUrlForThumbnail(seriesData.thumbnail_url);
+      }
+      
+      return seriesData;
+    });
+
+    const totalPages = Math.ceil(count / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    const response = {
+      category: {
+        id: category.id,
+        name: category.name
+      },
+      series: processedSeries,
+      pagination: {
+        current_page: pageNum,
+        total_pages: totalPages,
+        total_series: count,
+        series_per_page: limitNum,
+        has_next_page: hasNextPage,
+        has_prev_page: hasPrevPage,
+        next_page: hasNextPage ? pageNum + 1 : null,
+        prev_page: hasPrevPage ? pageNum - 1 : null
+      },
+      cached_at: new Date().toISOString()
+    };
+
+    res.json(response);
+  } catch (error) {
+    console.error('Series by category error:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch series by category' });
   }
 });
 
