@@ -1,0 +1,182 @@
+config:
+  target: '{{ $processEnvironment.BASE_URL || "https://tuktukiapp-dev-219733694412.asia-south1.run.app" }}'
+  phases:
+    - duration: 60
+      arrivalRate: 50
+      name: "Warm up - 50 users/sec"
+    - duration: 120
+      arrivalRate: 100
+      name: "Ramp up - 100 users/sec"
+    - duration: 300
+      arrivalRate: 200
+      name: "Sustained load - 200 users/sec"
+    - duration: 180
+      arrivalRate: 500
+      name: "Peak load - 500 users/sec"
+    - duration: 120
+      arrivalRate: 200
+      name: "Ramp down - 200 users/sec"
+    - duration: 60
+      arrivalRate: 50
+      name: "Cool down - 50 users/sec"
+  
+  # Global variables
+  variables:
+    totalUsers: 30000
+    concurrentUsers: 1000
+  
+  # HTTP settings
+  http:
+    timeout: 30000
+    pool: 100
+  
+  # Plugin settings
+  plugins:
+    metrics-by-endpoint: {}
+    expect: {}
+  
+  # Processor for generating test data
+  processor: "./artillery-processor.js"
+
+# Test scenarios
+scenarios:
+  - name: "User Authentication Flow"
+    weight: 40
+    flow:
+      - post:
+          url: "/api/sms/send-otp"
+          json:
+            mobile: "{{ generateMobileNumber() }}"
+          capture:
+            - json: "$.data"
+              as: "otp"
+          expect:
+            - statusCode: 200
+            - hasProperty: "data"
+      
+      - think: 2
+      
+      - post:
+          url: "/api/sms/verify-otp"
+          json:
+            mobile: "{{ generateMobileNumber() }}"
+            otp: "{{ otp }}"
+          headers:
+            "x-device-id": "{{ generateDeviceId() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+            - json: "$.user.id"
+              as: "userId"
+          expect:
+            - statusCode: 200
+            - hasProperty: "token"
+      
+      - think: 1
+      
+      - get:
+          url: "/api/task/reward-tasks"
+          headers:
+            "Authorization": "Bearer {{ authToken }}"
+            "x-device-id": "{{ generateDeviceId() }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Video Streaming Flow"
+    weight: 35
+    flow:
+      - post:
+          url: "/api/sms/send-otp"
+          json:
+            mobile: "{{ generateMobileNumber() }}"
+          capture:
+            - json: "$.data"
+              as: "otp"
+      
+      - think: 1
+      
+      - post:
+          url: "/api/sms/verify-otp"
+          json:
+            mobile: "{{ generateMobileNumber() }}"
+            otp: "{{ otp }}"
+          headers:
+            "x-device-id": "{{ generateDeviceId() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      
+      - think: 1
+      
+      - get:
+          url: "/api/videos"
+          headers:
+            "Authorization": "Bearer {{ authToken }}"
+            "x-device-id": "{{ generateDeviceId() }}"
+          expect:
+            - statusCode: 200
+      
+      - think: 3
+      
+      - get:
+          url: "/api/videos/categories"
+          headers:
+            "Authorization": "Bearer {{ authToken }}"
+            "x-device-id": "{{ generateDeviceId() }}"
+          expect:
+            - statusCode: 200
+
+  - name: "Reward System Flow"
+    weight: 25
+    flow:
+      - post:
+          url: "/api/sms/send-otp"
+          json:
+            mobile: "{{ generateMobileNumber() }}"
+          capture:
+            - json: "$.data"
+              as: "otp"
+      
+      - think: 1
+      
+      - post:
+          url: "/api/sms/verify-otp"
+          json:
+            mobile: "{{ generateMobileNumber() }}"
+            otp: "{{ otp }}"
+          headers:
+            "x-device-id": "{{ generateDeviceId() }}"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+            - json: "$.user.id"
+              as: "userId"
+      
+      - think: 1
+      
+      - get:
+          url: "/api/task/reward-tasks"
+          headers:
+            "Authorization": "Bearer {{ authToken }}"
+            "x-device-id": "{{ generateDeviceId() }}"
+          expect:
+            - statusCode: 200
+      
+      - think: 2
+      
+      - get:
+          url: "/api/task/user-tasks/{{ userId }}"
+          headers:
+            "Authorization": "Bearer {{ authToken }}"
+            "x-device-id": "{{ generateDeviceId() }}"
+          expect:
+            - statusCode: 200
+
+# Global flow (runs for every user)
+  - name: "Global Health Check"
+    weight: 0
+    flow:
+      - get:
+          url: "/api/health"
+          expect:
+            - statusCode: 200

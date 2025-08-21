@@ -6,7 +6,12 @@
     "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "load-test:1000-users": "node load-test-1000-users.js"
+    "load-test:1000-users": "node load-test-1000-users.js",
+    "load-test:30000-users": "node load-test-30000-users.js",
+    "load-test:artillery": "npx artillery run artillery-config-30000-users.yml",
+    "load-test:suite": "node run-load-tests.js",
+    "load-test:custom": "node run-load-tests.js --custom-only",
+    "load-test:artillery-only": "node run-load-tests.js --artillery-only"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",

@@ -25,7 +25,7 @@ function generateJwt(user) {
   return jwt.sign({ userId: user.id }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRY || '30d' });
 }
 // Pinnacle SMS function based on working curl command
-async function sendPinnacleSMS(accesskey, obj) {
+/*async function sendPinnacleSMS(accesskey, obj) {
   try {
     const data = JSON.stringify(obj);
     
@@ -46,7 +46,7 @@ async function sendPinnacleSMS(accesskey, obj) {
   } catch (error) {
     throw error;
   }
-}
+}*/
 
 /**
  * Validate mobile number format
@@ -149,7 +149,7 @@ router.post('/send-otp', async (req, res) => {
       ]
     };
 
-    const response = await sendPinnacleSMS(PINNACLE_ACCESS_KEY, smsPayload);
+    //const response = await sendPinnacleSMS(PINNACLE_ACCESS_KEY, smsPayload);
 
     //console.log('OTP SMS sent successfully:', response);
 
@@ -157,7 +157,7 @@ router.post('/send-otp', async (req, res) => {
       success: true,
       message: 'OTP sent successfully',
       mobile: cleanNumber,
-      data: response
+      data: otp
     });
 
   } catch (error) {
