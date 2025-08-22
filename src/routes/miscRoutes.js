@@ -757,7 +757,7 @@ router.get('/carousel-series', async (req, res) => {
         attributes: [] // Don't include series data, just check existence
       }],
       attributes: ['id', 'name'],
-      order: [['name', 'ASC']]
+      order: [['name', 'DESC']]
     });
 
     const response = {
