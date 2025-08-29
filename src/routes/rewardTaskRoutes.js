@@ -75,6 +75,20 @@ router.get('/reward_task', async (req, res) => {
     const completedShareTaskIds = Array.from(new Set(completedShareTransactions.map(r => r.task_id)));
     // --- End share logic ---
 
+    // --- Get social task completion status ---
+    // Get all social task IDs
+    const socialTaskIds = tasks.filter(t => t.type === 'social').map(t => t.id);
+    // Check which social tasks are completed by looking in reward transactions
+    const completedSocialTransactions = await RewardTransaction.findAll({
+      where: {
+        user_id: user.id,
+        task_id: { [Op.in]: socialTaskIds },
+        type: 'earn'
+      }
+    });
+    const completedSocialTaskIds = Array.from(new Set(completedSocialTransactions.map(r => r.task_id)));
+    // --- End social logic ---
+
     // Filter out one-time tasks already claimed
     const result = tasks.map(task => ({
       id: task.id,
@@ -88,11 +102,12 @@ router.get('/reward_task', async (req, res) => {
       max_count: task.max_count
     }));
     
-    // Combine all completed task IDs: one-time, streak, and share
+    // Combine all completed task IDs: one-time, streak, share, and social
     const allCompletedTaskIds = Array.from(new Set([
       ...Array.from(claimedIds),
       ...completedStreakTaskIds,
-      ...completedShareTaskIds
+      ...completedShareTaskIds,
+      ...completedSocialTaskIds
     ]));
     
     const responseData = {
@@ -109,43 +124,38 @@ router.get('/reward_task', async (req, res) => {
 });
 
 // POST /api/reward-tasks/:taskId/complete
-router.post('/:taskId/complete', userContext, async (req, res) => {
+router.post('/:taskId/complete', async (req, res) => {
   try {
     const { taskId } = req.params;
-    let userId = null;
-    let user = null;
-    if (req.user) {
-      userId = req.user.id;
-      user = req.user;
-    } else if (req.guestDeviceId) {
-      // Find or create guest user
-      const referralCode = await generateUniqueReferralCode(User);
-      const [guestUser] = await User.findOrCreate({
-        where: { device_id: req.guestDeviceId, login_type: 'guest' },
-        defaults: { 
-          current_reward_balance: 0, 
-          is_active: true, 
-          login_type: 'guest',
-          referral_code: referralCode
-        }
-      });
-      userId = guestUser.id;
-      user = guestUser;
-    } else {
-      return res.status(401).json({ error: 'Authentication required' });
+    
+    // Check for device ID in header
+    const deviceId = req.headers['x-device-id'];
+    if (!deviceId) {
+        return res.status(400).json({ error: 'x-device-id header is required' });
     }
+    
+    // Find user by device ID
+    let user = await User.findOne({ where: { device_id: deviceId } });
+    if (!user) {
+      return res.status(400).json({ error: 'User not found' });
+    }
+    
+    const userId = user.id;
 
-    // Find the task
+    // Find the task and get points
     const task = await RewardTask.findByPk(taskId);
     if (!task) return res.status(404).json({ error: 'Task not found' });
     if (!task.is_active) return res.status(400).json({ error: 'Task is not active' });
 
-    // Check if already completed (by user)
-    const alreadyCompleted = await RewardTransaction.findOne({
+    // Check if record already exists for this task ID and user
+    const existingRecord = await RewardTransaction.findOne({
       where: { user_id: userId, task_id: taskId, type: 'earn' }
     });
-    if (alreadyCompleted) {
-      return res.status(409).json({ error: 'Task already completed by this user/guest' });
+    if (existingRecord) {
+      return res.status(409).json({ 
+        error: 'Record already exists for this task',
+        existingRecord: existingRecord
+      });
     }
 
     // Update user's reward balance
@@ -153,7 +163,7 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
     await user.save();
     const new_balance = user.current_reward_balance;
 
-    // Create reward transaction for user (registered or guest)
+    // Create reward transaction record with points, task ID, and user ID
     const transaction = await RewardTransaction.create({
       user_id: userId,
       task_id: taskId,
@@ -167,16 +177,23 @@ router.post('/:taskId/complete', userContext, async (req, res) => {
     try {
       const { apiCache } = await import('../config/redis.js');
       
-      if (req.guestDeviceId) {
-        await apiCache.invalidateUserSession(req.guestDeviceId);
-        await apiCache.invalidateUserTransactionsCache(req.guestDeviceId);
+      if (deviceId) {
+        await apiCache.invalidateUserSession(deviceId);
+        await apiCache.invalidateUserTransactionsCache(deviceId);
         console.log('🗑️ User caches invalidated due to reward task completion');
       }
     } catch (cacheError) {
       console.error('Cache invalidation error:', cacheError);
     }
 
-    res.status(201).json({ message: 'Task completed, points awarded', transaction, new_balance });
+    res.status(201).json({ 
+      message: 'Task completed, points awarded', 
+      transaction, 
+      new_balance,
+      taskPoints: task.points,
+      taskId: taskId,
+      userId: userId
+    });
   } catch (error) {
     console.error('Error completing reward task:', error);
     res.status(500).json({ error: error.message || 'Failed to complete reward task' });
