@@ -595,6 +595,22 @@ router.post('/episode-bundle-purchase', async (req, res) => {
       return res.status(404).json({ error: 'User not found for provided device_id' });
     }
 
+    // Check if transaction already exists
+    const existingTransaction = await RewardTransaction.findOne({
+      where: { transaction_id: transaction_id }
+    });
+
+    if (existingTransaction) {
+      // Return existing transaction record
+      return res.json({
+        success: true,
+        message: 'Transaction already processed',
+        user_id: user.id,
+        existing_transaction: existingTransaction,
+        already_processed: true
+      });
+    }
+
     // Get episode bundle record
     const episodeBundle = await models.EpisodeBundlePrice.findByPk(episode_bundle_id);
     if (!episodeBundle) {
