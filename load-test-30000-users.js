@@ -8,7 +8,7 @@ const CONFIG = {
   TOTAL_USERS: 30000,
   CONCURRENT_USERS: 500, // Reduced for better server handling
   DELAY_BETWEEN_BATCHES: 200, // ms
-  OUTPUT_FILE: 'load-test-30000-final-report.json'
+  OUTPUT_FILE: 'load-test-30000-summary-report.json'
 };
 
 // Test data generator
@@ -539,10 +539,12 @@ class LoadTestRunner {
             this.results.maxResponseTime = step.responseTime;
           }
 
-          // Store sample data from successful API calls
+          // Store only essential sample data structure, not full data
           if (step.data && !this.results.apiDataSamples[step.step]) {
             this.results.apiDataSamples[step.step] = {
-              sample: step.data,
+              hasData: true,
+              dataType: typeof step.data,
+              isArray: Array.isArray(step.data),
               timestamp: new Date().toISOString()
             };
           }
@@ -585,7 +587,15 @@ class LoadTestRunner {
         }
       });
 
-      this.results.userFlowResults.push(userFlow);
+      // Store only essential user flow summary, not full details
+      this.results.userFlowResults.push({
+        userId: userFlow.userId,
+        deviceId: userFlow.deviceId,
+        success: userFlow.success,
+        totalTime: userFlow.totalTime,
+        stepsCount: userFlow.steps.length,
+        successfulSteps: userFlow.steps.filter(step => step.success).length
+      });
     });
 
     // Calculate averages
@@ -651,6 +661,7 @@ class LoadTestRunner {
     console.log('\n🎯 Load test completed!');
     this.printSummary();
     this.saveResults();
+    console.log('\n📊 Summary report generated successfully!');
   }
 
   printSummary() {
@@ -658,7 +669,7 @@ class LoadTestRunner {
     console.log('='.repeat(60));
     console.log(`Start Time: ${this.results.startTime}`);
     console.log(`End Time: ${this.results.endTime}`);
-    console.log(`Total Duration: ${(this.results.endTime - this.startTime) / 1000} seconds`);
+    console.log(`Total Duration: ${(this.results.endTime - this.results.startTime) / 1000} seconds`);
     console.log(`Total Users: ${this.results.totalUsers}`);
     console.log(`Successful Users: ${this.results.successfulUsers}`);
     console.log(`Failed Users: ${this.results.failedUsers}`);
@@ -718,8 +729,77 @@ class LoadTestRunner {
 
   saveResults() {
     try {
-      fs.writeFileSync(this.config.OUTPUT_FILE, JSON.stringify(this.results, null, 2));
-      console.log(`\n💾 Results saved to ${this.config.OUTPUT_FILE}`);
+      // Create a summary report with only essential information
+      const summaryReport = {
+        testInfo: {
+          startTime: this.results.startTime,
+          endTime: this.results.endTime,
+          duration: this.results.endTime ? (this.results.endTime - this.results.startTime) / 1000 : 0,
+          baseUrl: this.config.BASE_URL,
+          totalUsers: this.config.TOTAL_USERS,
+          concurrentUsers: this.config.CONCURRENT_USERS
+        },
+        results: {
+          totalUsers: this.results.totalUsers,
+          successfulUsers: this.results.successfulUsers,
+          failedUsers: this.results.failedUsers,
+          userSuccessRate: this.results.totalUsers > 0 ? ((this.results.successfulUsers / this.results.totalUsers) * 100).toFixed(2) + '%' : '0%',
+          totalRequests: this.results.totalRequests,
+          successfulRequests: this.results.successfulRequests,
+          failedRequests: this.results.failedRequests,
+          requestSuccessRate: this.results.totalRequests > 0 ? ((this.results.successfulRequests / this.results.totalRequests) * 100).toFixed(2) + '%' : '0%'
+        },
+        performance: {
+          averageResponseTime: this.results.averageResponseTime.toFixed(2) + 'ms',
+          minResponseTime: this.results.minResponseTime === Infinity ? 'N/A' : this.results.minResponseTime.toFixed(2) + 'ms',
+          maxResponseTime: this.results.maxResponseTime === 0 ? 'N/A' : this.results.maxResponseTime.toFixed(2) + 'ms'
+        },
+        endpointPerformance: Object.entries(this.results.endpointPerformance).map(([endpoint, stats]) => ({
+          endpoint,
+          totalRequests: stats.totalRequests,
+          successfulRequests: stats.successfulRequests,
+          failedRequests: stats.failedRequests,
+          successRate: stats.totalRequests > 0 ? ((stats.successfulRequests / stats.totalRequests) * 100).toFixed(2) + '%' : '0%',
+          averageResponseTime: stats.averageResponseTime.toFixed(2) + 'ms'
+        })),
+        statusCodeDistribution: Object.entries(this.results.statusCodeDistribution)
+          .sort(([a], [b]) => parseInt(a) - parseInt(b))
+          .map(([statusCode, count]) => ({
+            statusCode: parseInt(statusCode),
+            count,
+            percentage: ((count / this.results.totalRequests) * 100).toFixed(2) + '%'
+          })),
+        topErrors: this.results.errors.slice(0, 10).map(error => ({
+          step: error.step,
+          error: error.error,
+          count: this.results.errors.filter(e => e.step === error.step && e.error === error.error).length
+        })).filter((error, index, self) => 
+          index === self.findIndex(e => e.step === error.step && e.error === error.error)
+        ).sort((a, b) => b.count - a.count).slice(0, 10),
+        apiDataSamples: Object.entries(this.results.apiDataSamples).map(([endpoint, data]) => ({
+          endpoint,
+          hasData: data.hasData,
+          dataType: data.dataType,
+          isArray: data.isArray,
+          timestamp: data.timestamp
+        }))
+      };
+
+      fs.writeFileSync(this.config.OUTPUT_FILE, JSON.stringify(summaryReport, null, 2));
+      console.log(`\n💾 Summary report saved to ${this.config.OUTPUT_FILE}`);
+      
+      // Also save a minimal version for quick reference
+      const minimalReport = {
+        summary: `${this.results.successfulUsers}/${this.results.totalUsers} users successful (${((this.results.successfulUsers / this.results.totalUsers) * 100).toFixed(2)}%)`,
+        requests: `${this.results.successfulRequests}/${this.results.totalRequests} requests successful (${((this.results.successfulRequests / this.results.totalRequests) * 100).toFixed(2)}%)`,
+        avgResponseTime: `${this.results.averageResponseTime.toFixed(2)}ms`,
+        duration: `${summaryReport.testInfo.duration.toFixed(2)}s`
+      };
+      
+      const minimalFileName = this.config.OUTPUT_FILE.replace('.json', '-minimal.json');
+      fs.writeFileSync(minimalFileName, JSON.stringify(minimalReport, null, 2));
+      console.log(`📊 Minimal report saved to ${minimalFileName}`);
+      
     } catch (error) {
       console.error('Failed to save results:', error.message);
     }
