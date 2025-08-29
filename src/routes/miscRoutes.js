@@ -144,6 +144,11 @@ router.get('/profile', async (req, res) => {
     const deviceId = req.headers['x-device-id'];
     const authHeader = req.headers['authorization'];
     
+    // Check if device ID is null or blank when no JWT token is provided
+    if ((!deviceId || deviceId.trim() === '')) {
+      return res.status(400).json({ error: 'device_id is required' });
+    }
+    
     if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.split(' ')[1];
       const payload = jwt.verify(token, process.env.JWT_SECRET);
