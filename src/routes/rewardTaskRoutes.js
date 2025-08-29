@@ -154,7 +154,6 @@ router.post('/:taskId/complete', async (req, res) => {
     if (existingRecord) {
       return res.status(409).json({ 
         error: 'Record already exists for this task',
-        existingRecord: existingRecord
       });
     }
 
@@ -188,7 +187,6 @@ router.post('/:taskId/complete', async (req, res) => {
 
     res.status(201).json({ 
       message: 'Task completed, points awarded', 
-      transaction, 
       new_balance,
       taskPoints: task.points,
       taskId: taskId,
