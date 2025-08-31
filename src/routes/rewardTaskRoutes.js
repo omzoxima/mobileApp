@@ -593,9 +593,14 @@ router.post('/episode-bundle-purchase', async (req, res) => {
   try {
     const { episode_bundle_id, transaction_id, product_id, receipt, source } = req.body;
     
-    // Validate required fields
-    if (!episode_bundle_id || !transaction_id || !product_id || !receipt || !source) {
-      return res.status(400).json({ error: 'episode_bundle_id, transaction_id, product_id, receipt, and source are required' });
+    // Validate required fields - episode_bundle_id or product_id must be present
+    if (!transaction_id || !receipt || !source) {
+      return res.status(400).json({ error: 'transaction_id, receipt, and source are required' });
+    }
+    
+    // Check if both episode_bundle_id and product_id are missing
+    if (!episode_bundle_id && !product_id) {
+      return res.status(400).json({ error: 'Either episode_bundle_id or product_id must be provided' });
     }
 
     // Check for mandatory x-device-id header
@@ -627,7 +632,17 @@ router.post('/episode-bundle-purchase', async (req, res) => {
     }
 
     // Get episode bundle record
-    const episodeBundle = await models.EpisodeBundlePrice.findByPk(episode_bundle_id);
+    let episodeBundle;
+    if (episode_bundle_id) {
+      // If episode_bundle_id is provided, find by primary key
+      episodeBundle = await models.EpisodeBundlePrice.findByPk(episode_bundle_id);
+    } else {
+      // If episode_bundle_id is not provided, find by product_id
+      episodeBundle = await models.EpisodeBundlePrice.findOne({
+        where: { productId: product_id }
+      });
+    }
+    
     if (!episodeBundle) {
       return res.status(404).json({ error: 'Episode bundle not found' });
     }
@@ -657,7 +672,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         user_id: user.id,
         type: 'payment_earn',
         points: episodeBundle.bundle_count || 0,
-        episode_bundle_id: episode_bundle_id,
+        episode_bundle_id: episodeBundle.id,
         product_id: product_id,
         transaction_id: transaction_id,
         receipt: receipt,
@@ -691,7 +706,7 @@ router.post('/episode-bundle-purchase', async (req, res) => {
         user_id: user.id,
         type: 'payment_earn',
         points: pointsToAdd,
-        episode_bundle_id: episode_bundle_id,
+        episode_bundle_id: episodeBundle.id,
         product_id: product_id,
         transaction_id: transaction_id,
         receipt: receipt,
