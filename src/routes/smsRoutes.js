@@ -151,7 +151,7 @@ router.post('/send-otp', async (req, res) => {
         {
           dest: [cleanNumber],
           msg: `Your OTP for login is ${otp}. Do not share it with anyone. Valid for 10 minutes. - 7676TUKTUKI`,
-          type: "UC",
+          type: "PM",
           header: DEFAULT_SENDER,
           app_country: "1",
           country_cd: "91",
