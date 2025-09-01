@@ -599,8 +599,8 @@ router.post('/episode-bundle-purchase', async (req, res) => {
     }
     
     // Check if both episode_bundle_id and product_id are missing
-    if (!episode_bundle_id && !product_id) {
-      return res.status(400).json({ error: 'Either episode_bundle_id or product_id must be provided' });
+    if (!product_id) {
+      return res.status(400).json({ error: ' product_id must be provided' });
     }
 
     // Check for mandatory x-device-id header
@@ -633,14 +633,21 @@ router.post('/episode-bundle-purchase', async (req, res) => {
 
     // Get episode bundle record
     let episodeBundle;
-    if (episode_bundle_id) {
-      // If episode_bundle_id is provided, find by primary key
-      episodeBundle = await models.EpisodeBundlePrice.findByPk(episode_bundle_id);
-    } else {
-      // If episode_bundle_id is not provided, find by product_id
+    if (product_id) {
+      // If product_id is provided, first check productId column, then appleproductid column
       episodeBundle = await models.EpisodeBundlePrice.findOne({
         where: { productId: product_id }
       });
+      
+      // If not found in productId column, check appleproductid column
+      if (!episodeBundle) {
+        episodeBundle = await models.EpisodeBundlePrice.findOne({
+          where: { appleproductid: product_id }
+        });
+      }
+    } else if (episode_bundle_id) {
+      // If product_id is not present, then check by episode_bundle_id
+      episodeBundle = await models.EpisodeBundlePrice.findByPk(episode_bundle_id);
     }
     
     if (!episodeBundle) {
