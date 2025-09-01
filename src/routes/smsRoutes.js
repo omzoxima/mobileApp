@@ -160,7 +160,7 @@ router.post('/send-otp', async (req, res) => {
         }
       ]
     };
-
+   console.log('SMS Payload:', smsPayload);
     const response = await sendPinnacleSMS(PINNACLE_ACCESS_KEY, smsPayload);
 
     //console.log('OTP SMS sent successfully:', response);
