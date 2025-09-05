@@ -33,14 +33,6 @@ router.get('/wishlist/series-episodes', async (req, res) => {
       return res.status(400).json({ error: 'Invalid user_id format' });
     }
 
-    // Try to get from cache first
-    const { apiCache } = await import('../config/redis.js');
-    const cachedWishlist = await apiCache.getWishlistSeriesCache(user_id);
-    if (cachedWishlist) {
-      console.log('📦 Wishlist data served from cache');
-      return res.json(cachedWishlist);
-    }
-
     // Fetch wishlist records for the user
     const wishlistRecords = await Wishlist.findAll({ where: { user_id } });
     if (!wishlistRecords || wishlistRecords.length === 0) {
@@ -76,11 +68,7 @@ router.get('/wishlist/series-episodes', async (req, res) => {
 
     // Convert map values to array
     const result = Array.from(seriesMap.values());
-    const wishlistData = { wishlist: result, user_id, cached_at: new Date().toISOString() };
-
-    // Cache wishlist data for 2 hours
-    await apiCache.setWishlistSeriesCache(user_id, wishlistData);
-    console.log('💾 Wishlist data cached for 2 hours');
+    const wishlistData = { wishlist: result, user_id };
 
     res.json(wishlistData);
   } catch (error) {
@@ -519,26 +507,32 @@ router.post('/episode/access', async (req, res) => {
 });
 
 // POST /api/action (like, share, subscribe)
-router.post('/action', userContext, async (req, res) => {
+router.post('/action', async (req, res) => {
   try {
     const { action, series_id, episode_id } = req.body;
-    let user_id = null;
-    let device_id = null;
-    if (req.user) {
-      user_id = req.user.id;
-    } else if (req.guestDeviceId) {
-      device_id = req.guestDeviceId;
-      // Try to find a user with this device_id
-      const user = await models.User.findOne({ where: { device_id } });
-      if (user) {
-        user_id = user.id;
-        device_id = null; // Prefer user_id if found
-      }
-    } else {
-      return res.status(401).json({ error: 'Authentication required: provide JWT or x-device-id header' });
+    const device_id = req.headers['x-device-id'];
+    
+    // Check for required x-device-id header
+    if (!device_id) {
+      return res.status(400).json({ error: 'x-device-id header is required' });
     }
-    if (!series_id && !episode_id) {
-      return res.status(400).json({ error: 'series_id or episode_id is required' });
+    
+    // Check for required fields
+    if (!action) {
+      return res.status(400).json({ error: 'action is required' });
+    }
+    
+    if (!series_id) {
+      return res.status(400).json({ error: 'series_id is required' });
+    }
+    
+    // Try to find a user with this device_id
+    let user_id = null;
+    const user = await models.User.findOne({ where: { device_id } });
+    if (user) {
+      user_id = user.id;
+    } else {
+      return res.status(400).json({ error: 'Device ID is incorrect' });
     }
     if (!['like', 'share', 'subscribe','unsubscribe','unlike'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action. Must be like, share, or subscribe.' });
@@ -555,7 +549,6 @@ router.post('/action', userContext, async (req, res) => {
     // Build where clause
     const where = { };
     if (user_id) where.user_id = user_id;
-    if (device_id) where.device_id = device_id;
     if (series_id) where.series_id = series_id;
     if (episode_id) where.episode_id = episode_id;
     let record;
@@ -563,7 +556,11 @@ router.post('/action', userContext, async (req, res) => {
       // Allow multiple shares
       record = await Model.create({ ...where, created_at: new Date(), updated_at: new Date() });
     } else if (action === 'unsubscribe') {
-      const deletedCount = await Model.destroy({ where });
+      // For unsubscribe, only check series_id and user_id
+      const unsubscribeWhere = { series_id };
+      if (user_id) unsubscribeWhere.user_id = user_id;
+      
+      const deletedCount = await Model.destroy({ where: unsubscribeWhere });
       if (deletedCount === 0) {
         return res.status(404).json({ error: 'No matching wishlist entries found' });
       }
