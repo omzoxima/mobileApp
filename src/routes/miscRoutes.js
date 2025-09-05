@@ -86,34 +86,33 @@ router.get('/search', async (req, res) => {
     const { q } = req.query;
     if (!q) return res.status(400).json({ error: 'Query string q is required' });
     
-    // Try to get from cache first
-    const { apiCache } = await import('../config/redis.js');
-    const cachedSearch = await apiCache.getSearchCache(q);
-    if (cachedSearch) {
-      console.log('📦 Search results served from cache');
-      return res.json(cachedSearch);
-    }
-    
     const seriesResults = await Series.findAll({
       where: { title: { [Op.iLike]: `%${q}%` } },
       include: [{ model: Episode }],
-      limit: 10
+      order: [['created_at', 'DESC']]
     });
     
-    // Generate CDN signed URL for thumbnail_url in each series directly
-    const seriesWithSignedUrl = await Promise.all(seriesResults.map(async series => {
-      let obj = series.toJSON ? series.toJSON() : series;
-      if (obj.thumbnail_url) {
-        obj.thumbnail_url = generateCdnSignedUrlForThumbnail(obj.thumbnail_url);
+    // Deduplicate series by title - keep only the first occurrence
+    const uniqueSeriesMap = new Map();
+    seriesResults.forEach(series => {
+      const seriesData = series.toJSON ? series.toJSON() : series;
+      if (!uniqueSeriesMap.has(seriesData.title)) {
+        uniqueSeriesMap.set(seriesData.title, seriesData);
       }
-      return obj;
+    });
+    
+    // Convert map values to array and limit to 10 results
+    const uniqueSeries = Array.from(uniqueSeriesMap.values()).slice(0, 10);
+    
+    // Generate CDN signed URL for thumbnail_url in each series directly
+    const seriesWithSignedUrl = await Promise.all(uniqueSeries.map(async series => {
+      if (series.thumbnail_url) {
+        series.thumbnail_url = generateCdnSignedUrlForThumbnail(series.thumbnail_url);
+      }
+      return series;
     }));
     
-    const searchResults = { series: seriesWithSignedUrl, query: q, cached_at: new Date().toISOString() };
-    
-    // Cache search results for 2 hours
-    await apiCache.setSearchCache(q, searchResults);
-    console.log('💾 Search results cached for 2 hours');
+    const searchResults = { series: seriesWithSignedUrl, query: q };
     
     res.json(searchResults);
   } catch (error) {
