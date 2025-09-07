@@ -210,14 +210,18 @@ router.post('/streak/episode-watched', async (req, res) => {
     }
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const today = getLocalTime();
-    const todayStr = today.toISOString().slice(0, 10); // YYYY-MM-DD
+    // Use UTC date for consistent date comparison without timezone issues
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10); // YYYY-MM-DD in UTC
     let lastStreakDateStr = null;
     if (user.last_streak_date) {
       const lastStreakDateObj = new Date(user.last_streak_date);
       lastStreakDateStr = !isNaN(lastStreakDateObj) ? lastStreakDateObj.toISOString().slice(0, 10) : null;
     }
-    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    // Calculate yesterday in UTC
+    const yesterdayDate = new Date(now);
+    yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+    const yesterday = yesterdayDate.toISOString().slice(0, 10);
 
     let streakIncreased = false;
     let streakReset = false;
@@ -229,12 +233,12 @@ router.post('/streak/episode-watched', async (req, res) => {
       // Already counted today, do nothing
     } else if (lastStreakDateStr === yesterday) {
       user.current_streak += 1;
-      user.last_streak_date = today;
+      user.last_streak_date = now; // Use current UTC time
       user.updated_at = getLocalTime();
       streakIncreased = true;
     } else {
       user.current_streak = 1;
-      user.last_streak_date = today;
+      user.last_streak_date = now; // Use current UTC time
       user.updated_at = getLocalTime();
       streakReset = true;
     }
@@ -264,8 +268,8 @@ router.post('/streak/episode-watched', async (req, res) => {
           streak_count: user.current_streak,
           disabled_streak_count: false,
           task_id: rewardTask.id,
-          created_at: getLocalTime(),
-          updated_at: getLocalTime()
+          created_at: now, // Use current UTC time
+          updated_at: now // Use current UTC time
         });
         user.current_reward_balance += rewardTask.points;
         await user.save();
@@ -301,8 +305,8 @@ router.post('/streak/episode-watched', async (req, res) => {
           type: 'earn',
           points: dailyWatchTask.points,
           task_id: dailyWatchTask.id,
-          created_at: getLocalTime(),
-          updated_at: getLocalTime()
+          created_at: now, // Use current UTC time
+          updated_at: now // Use current UTC time
         });
         user.current_reward_balance += dailyWatchTask.points;
         await user.save();
