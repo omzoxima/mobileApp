@@ -211,6 +211,13 @@ router.get('/profile', async (req, res) => {
 
       await t.commit();
 
+      // Calculate days left for new user if dates exist
+      let daysLeft = null;
+      if (user.start_date && user.end_date && today < user.end_date) {
+        const timeDiff = user.end_date.getTime() - today.getTime();
+        daysLeft = Math.ceil(timeDiff / (1000 * 3600 * 24));
+      }
+
       return res.json({
         user: {
           id: user.id,
@@ -220,6 +227,7 @@ router.get('/profile', async (req, res) => {
           lock: true, // New users typically start locked
           start_date: user.start_date,
           end_date: user.end_date,
+          days_left: daysLeft,
           phone_or_email: user.phone_or_email,
           referral_code:user.referral_code,
           app_install_count:user.app_install_count
@@ -231,8 +239,16 @@ router.get('/profile', async (req, res) => {
     // Existing user logic (no transaction needed for simple read)
     const today = getLocalTime();
     let lock = true;
+    let daysLeft = null;
+    
     if (user.start_date && user.end_date) {
       lock = !(today >= user.start_date && today <= user.end_date);
+      
+      // Calculate days left to end date when both dates are not null and today is less than end date
+      if (today < user.end_date) {
+        const timeDiff = user.end_date.getTime() - today.getTime();
+        daysLeft = Math.ceil(timeDiff / (1000 * 3600 * 24));
+      }
     }
     
     res.json({
@@ -244,6 +260,7 @@ router.get('/profile', async (req, res) => {
         lock,
         start_date: user.start_date,
         end_date: user.end_date,
+        days_left: daysLeft,
         phone_or_email: user.phone_or_email,
         referral_code: user.referral_code,
         app_install_count: user.app_install_count
