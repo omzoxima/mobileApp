@@ -113,15 +113,6 @@ router.get('/series/:seriesId/episodes', async (req, res) => {
     const { seriesId } = req.params;
     const deviceId = req.headers['x-device-id'];
     
-    // Try to get from cache first (if user is not authenticated)
-    if (!deviceId) {
-      const cachedData = await apiCache.getSeriesCache('episodes', 'all', seriesId);
-      if (cachedData) {
-        console.log('📦 Episodes data served from cache');
-        return res.json(cachedData);
-      }
-    }
-    
     const episodes = await Episode.findAll({
       where: { series_id: seriesId },
       order: [['episode_number', 'ASC']]
@@ -133,49 +124,21 @@ router.get('/series/:seriesId/episodes', async (req, res) => {
     let wishlisted = false;
     
     if (deviceId) {
-      // Try to get user session from cache first
-      let userSession = await apiCache.getUserSession(deviceId);
-      
-      if (userSession) {
-        user = userSession;
-        console.log('👤 User session served from cache');
-      } else {
-        // Fetch user from database
-        user = await models.User.findOne({ where: { device_id: deviceId } });
-        
-        if (user) {
-          // Cache user session for 2 hours
-          await apiCache.setUserSession(deviceId, user);
-          console.log('💾 User session cached for 2 hours');
-        }
-      }
+      // Fetch user from database
+      user = await models.User.findOne({ where: { device_id: deviceId } });
       
       if (user) {
-        // Try to get wishlist data from cache
-        const wishlistCache = await apiCache.getWishlistCache(user.id, seriesId);
+        // Get all liked episode ids for this user
+        const likes = await models.Like.findAll({
+          where: { user_id: user.id, episode_id: episodes.map(e => e.id) }
+        });
+        likedEpisodeIds = likes.map(l => l.episode_id);
         
-        if (wishlistCache) {
-          likedEpisodeIds = wishlistCache.likedEpisodeIds;
-          wishlisted = wishlistCache.wishlisted;
-        } else {
-          // Get all liked episode ids for this user
-          const likes = await models.Like.findAll({
-            where: { user_id: user.id, episode_id: episodes.map(e => e.id) }
-          });
-          likedEpisodeIds = likes.map(l => l.episode_id);
-          
-          // Check if this series is in the user's wishlist
-          const wishlist = await models.Wishlist.findOne({
-            where: { user_id: user.id, series_id: seriesId }
-          });
-          wishlisted = !!wishlist;
-          
-          // Cache wishlist data for 2 hours
-          await apiCache.setWishlistCache(user.id, seriesId, {
-            likedEpisodeIds,
-            wishlisted
-          });
-        }
+        // Check if this series is in the user's wishlist
+        const wishlist = await models.Wishlist.findOne({
+          where: { user_id: user.id, series_id: seriesId }
+        });
+        wishlisted = !!wishlist;
       }
     }
 
@@ -185,11 +148,6 @@ router.get('/series/:seriesId/episodes', async (req, res) => {
       liked: likedEpisodeIds.includes(ep.id),
       wishlisted
     }));
-
-    // Cache episodes data for non-authenticated users (2 hours)
-    if (!deviceId) {
-      await apiCache.setSeriesCache('episodes', 'all', seriesId, episodesWithFlags);
-    }
 
     res.json(episodesWithFlags);
   } catch (error) {
