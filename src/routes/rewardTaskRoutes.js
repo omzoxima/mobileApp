@@ -16,6 +16,16 @@ function getLocalTime() {
   return localTime;
 }
 
+// Helper function to get IST timezone date
+function getISTDate(date = new Date()) {
+  return new Date(date.toLocaleString("en-US", {timeZone: "Asia/Kolkata"}));
+}
+
+// Helper function to get IST date string (YYYY-MM-DD)
+function getISTDateString(date = new Date()) {
+  return getISTDate(date).toISOString().slice(0, 10);
+}
+
 // /reward_task route - NO CACHING as requested
 router.get('/reward_task', async (req, res) => {
   const { User, RewardTask, RewardTransaction } = models;
@@ -210,22 +220,19 @@ router.post('/streak/episode-watched', async (req, res) => {
     }
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // Use IST timezone (UTC+5:30) for date comparison
+    // Use IST timezone directly for date comparison
     const now = new Date();
-    // Convert to IST by adding 5:30 hours
-    const istTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
-    const todayStr = istTime.toISOString().slice(0, 10); // YYYY-MM-DD in IST
+    const istToday = getISTDate(now);
+    const todayStr = getISTDateString(now);
     
     let lastStreakDateStr = null;
     if (user.last_streak_date) {
-      const lastStreakDateObj = new Date(user.last_streak_date);
-      // Convert last streak date to IST for comparison
-      const lastStreakIST = new Date(lastStreakDateObj.getTime() + (5.5 * 60 * 60 * 1000));
-      lastStreakDateStr = !isNaN(lastStreakDateObj) ? lastStreakIST.toISOString().slice(0, 10) : null;
+      lastStreakDateStr = getISTDateString(new Date(user.last_streak_date));
     }
+    
     // Calculate yesterday in IST
-    const yesterdayDate = new Date(istTime);
-    yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+    const yesterdayDate = new Date(istToday);
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
     const yesterday = yesterdayDate.toISOString().slice(0, 10);
 
     let streakIncreased = false;
@@ -238,12 +245,12 @@ router.post('/streak/episode-watched', async (req, res) => {
       // Already counted today, do nothing
     } else if (lastStreakDateStr === yesterday) {
       user.current_streak += 1;
-      user.last_streak_date = istTime; // Use IST time
+      user.last_streak_date = istToday; // Use IST time
       user.updated_at = getLocalTime();
       streakIncreased = true;
     } else {
       user.current_streak = 1;
-      user.last_streak_date = istTime; // Use IST time
+      user.last_streak_date = istToday; // Use IST time
       user.updated_at = getLocalTime();
       streakReset = true;
     }
@@ -273,8 +280,8 @@ router.post('/streak/episode-watched', async (req, res) => {
           streak_count: user.current_streak,
           disabled_streak_count: false,
           task_id: rewardTask.id,
-          created_at: istTime, // Use IST time
-          updated_at: istTime // Use IST time
+          created_at: istToday, // Use IST time
+          updated_at: istToday // Use IST time
         });
         user.current_reward_balance += rewardTask.points;
         await user.save();
@@ -310,8 +317,8 @@ router.post('/streak/episode-watched', async (req, res) => {
           type: 'earn',
           points: dailyWatchTask.points,
           task_id: dailyWatchTask.id,
-          created_at: istTime, // Use IST time
-          updated_at: istTime // Use IST time
+          created_at: istToday, // Use IST time
+          updated_at: istToday // Use IST time
         });
         user.current_reward_balance += dailyWatchTask.points;
         await user.save();
@@ -343,7 +350,13 @@ router.post('/streak/episode-watched', async (req, res) => {
       rewardTask,
       rewardTransaction,
       dailyWatchPointAwarded,
-      dailyWatchTransaction
+      dailyWatchTransaction,
+      api_hit_time: {
+        ist: istToday.toISOString(),
+        utc: now.toISOString(),
+        ist_readable: istToday.toLocaleString("en-IN", {timeZone: "Asia/Kolkata"}),
+        utc_readable: now.toLocaleString("en-US", {timeZone: "UTC"})
+      }
     });
   } catch (error) {
     console.error('Error updating streak:', error);
