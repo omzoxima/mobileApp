@@ -350,13 +350,8 @@ router.post('/streak/episode-watched', async (req, res) => {
       rewardTask,
       rewardTransaction,
       dailyWatchPointAwarded,
-      dailyWatchTransaction,
-      api_hit_time: {
-        ist: istToday.toISOString(),
-        utc: now.toISOString(),
-        ist_readable: istToday.toLocaleString("en-IN", {timeZone: "Asia/Kolkata"}),
-        utc_readable: now.toLocaleString("en-US", {timeZone: "UTC"})
-      }
+      dailyWatchTransaction
+     
     });
   } catch (error) {
     console.error('Error updating streak:', error);
