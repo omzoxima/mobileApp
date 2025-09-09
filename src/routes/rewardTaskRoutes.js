@@ -579,7 +579,7 @@ router.post('/ad-reward', async (req, res) => {
 
       return res.json({
         success: true,
-        message: 'Episode access granted! Ad rewards cleared.',
+        message: 'New episode unlocked',
         totalPoints: totalPoints,
         episodeAccess: {
           episode_id,
