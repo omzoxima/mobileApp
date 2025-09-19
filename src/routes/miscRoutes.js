@@ -7,6 +7,8 @@ import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
 import { generateCdnSignedUrlForThumbnail } from '../services/cdnService.js';
 import { generateUniqueReferralCode } from '../utils/referralCodeGenerator.js';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
 
 const { Series, Episode, User, StaticContent, Wishlist, OTP, Category } = models;
 const router = express.Router();
@@ -882,6 +884,55 @@ router.get('/series-by-category/:categoryId', async (req, res) => {
   } catch (error) {
     console.error('Series by category error:', error);
     res.status(500).json({ error: error.message || 'Failed to fetch series by category' });
+  }
+});
+
+// Razorpay client initialization using env variables
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
+// POST /api/create-order - Create Razorpay order
+router.post('/create-order', async (req, res) => {
+  try {
+    const { amount, currency, receipt } = req.body;
+    if (!amount) {
+      return res.status(400).json({ error: 'amount is required' });
+    }
+
+    const options = {
+      amount: Math.round(Number(amount) * 100),
+      currency: currency || 'INR',
+      receipt: receipt || `receipt_${Date.now()}`,
+    };
+
+    const order = await razorpay.orders.create(options);
+    return res.json(order);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Failed to create order' });
+  }
+});
+
+// POST /api/verify-payment - Verify Razorpay payment signature
+router.post('/verify-payment', (req, res) => {
+  try {
+    const { order_id, payment_id, signature } = req.body;
+    if (!order_id || !payment_id || !signature) {
+      return res.status(400).json({ error: 'order_id, payment_id and signature are required' });
+    }
+
+    const generatedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${order_id}|${payment_id}`)
+      .digest('hex');
+
+    if (generatedSignature === signature) {
+      return res.json({ success: true, message: 'Payment verified successfully' });
+    }
+    return res.json({ success: false, message: 'Payment verification failed' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Verification failed' });
   }
 });
 
