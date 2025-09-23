@@ -23,49 +23,82 @@ const router = express.Router();
 const storage = new Storage();
 const bucketName = "run-sources-tuktuki-464514-asia-south1";
 
-// API: /compress-image?file=path/to/file.jpg
+// API: /compress-image?file=thumbnails/path/to/file.jpg
 router.get("/compress-image", async (req, res) => {
   try {
-    const filePath = req.query.file; 
+    const filePath = (req.query.file || "").toString().trim();
     if (!filePath) return res.status(400).send("File path required");
+
+    // Basic safety validations: prevent path traversal and enforce thumbnails folder
+    if (filePath.includes("..") || filePath.startsWith("/")) {
+      return res.status(400).send("Invalid file path");
+    }
+    if (!filePath.startsWith("thumbnails/")) {
+      return res.status(400).send("Only thumbnails can be compressed");
+    }
 
     const bucket = storage.bucket(bucketName);
     const file = bucket.file(filePath);
 
-    // 1. File size before
+    // 1) Read current metadata (size + contentType)
     const [metadataBefore] = await file.getMetadata();
-    const sizeBefore = metadataBefore.size;
+    const sizeBefore = Number(metadataBefore.size || 0);
+    const originalContentType = metadataBefore.contentType || "application/octet-stream";
 
-    // 2. Download file
+    // 2) Download bytes (private bucket is fine via server credentials)
     const [data] = await file.download();
 
-    // 3. Compress with sharp
-    const quality = 75; // you can change this value
-    const compressedBuffer = await sharp(data)
-      .jpeg({ quality, mozjpeg: true })
-      .toBuffer();
+    // 3) Format-aware optimization without resizing
+    const lowerPath = filePath.toLowerCase();
+    let optimizedBuffer;
+    let targetContentType = originalContentType;
 
-    // 4. Overwrite file
-    await file.save(compressedBuffer, {
-      metadata: { contentType: "image/jpeg" }
-    });
+    const image = sharp(data, { failOn: "none" }).withMetadata(); // keep metadata/orientation
 
-    // 5. File size after
+    if (originalContentType.includes("jpeg") || originalContentType.includes("jpg") ||
+        lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg")) {
+      // Near-lossless JPEG optimization: keep chroma detail, no resize
+      optimizedBuffer = await image
+        .jpeg({ quality: 90, mozjpeg: true, progressive: true, chromaSubsampling: "4:4:4" })
+        .toBuffer();
+      targetContentType = "image/jpeg";
+    } else if (originalContentType.includes("png") || lowerPath.endsWith(".png")) {
+      // PNG lossless compression
+      optimizedBuffer = await image
+        .png({ compressionLevel: 9, adaptiveFiltering: true })
+        .toBuffer();
+      targetContentType = "image/png";
+    } else if (originalContentType.includes("webp") || lowerPath.endsWith(".webp")) {
+      // WebP lossless
+      optimizedBuffer = await image
+        .webp({ lossless: true })
+        .toBuffer();
+      targetContentType = "image/webp";
+    } else {
+      // Unknown type: pass-through (no change)
+      optimizedBuffer = data;
+    }
+
+    // 4) Overwrite the same object
+    await file.save(optimizedBuffer, { metadata: { contentType: targetContentType } });
+
+    // 5) Read new size
     const [metadataAfter] = await file.getMetadata();
-    const sizeAfter = metadataAfter.size;
+    const sizeAfter = Number(metadataAfter.size || 0);
 
     // Logs
-    console.log(`✅ File compressed: ${filePath}`);
-    console.log(`   Size before: ${(sizeBefore / 1024).toFixed(2)} KB`);
-    console.log(`   Size after : ${(sizeAfter / 1024).toFixed(2)} KB`);
-    console.log(`   Quality    : ${quality}`);
+    console.log(`✅ File optimized: ${filePath}`);
+    console.log(`   Type        : ${originalContentType} -> ${targetContentType}`);
+    console.log(`   Size before : ${(sizeBefore / 1024).toFixed(2)} KB`);
+    console.log(`   Size after  : ${(sizeAfter / 1024).toFixed(2)} KB`);
 
     res.send({
       success: true,
       file: filePath,
+      content_type_before: originalContentType,
+      content_type_after: targetContentType,
       size_before_kb: (sizeBefore / 1024).toFixed(2),
-      size_after_kb: (sizeAfter / 1024).toFixed(2),
-      quality
+      size_after_kb: (sizeAfter / 1024).toFixed(2)
     });
   } catch (err) {
     console.error("❌ Compression error:", err);
