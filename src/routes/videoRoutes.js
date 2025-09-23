@@ -932,5 +932,17 @@ async function refreshAllUrlCaches() {
     throw error;
   }
 }
+router.get('/razorpay-episode-bundles', async (req, res) => {
+  try {
+    const bundles = await models.RazorpayEpisodeBundle.findAll({
+      attributes: ['id', 'plan_id', 'price', 'name'],
+      order: [['updated_at', 'DESC']]
+    });
+    res.json(bundles);
+  } catch (error) {
+    console.error('Bundle API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 
 export default router;
