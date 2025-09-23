@@ -4,28 +4,53 @@ import crypto from 'crypto';
 
 const router = express.Router();
 router.post('/order', async (req, res) => {
-  // initializing razorpay
-  const razorpay = new Razorpay({
-      key_id: req.body.keyId,
-      key_secret: req.body.keySecret,
-  });
+  console.log('POST /order');
 
-  // setting up options for razorpay order.
-  const options = {
-      amount: req.body.amount,
-      currency: req.body.currency,
-      receipt: "any unique id for every order",
-      payment_capture: 1
-  };
   try {
-      const response = await razorpay.orders.create(options)
+      // Validate required fields
+      if (!req.body.amount || !req.body.currency || !req.body.keyId || !req.body.keySecret) {
+          return res.status(400).json({
+              error: 'Missing required fields: amount, currency, keyId, keySecret',
+              received: req.body
+          });
+      }
+
+      // initializing razorpay
+      const razorpay = new Razorpay({
+          key_id: req.body.keyId,
+          key_secret: req.body.keySecret,
+      });
+
+      // setting up options for razorpay order.
+      const options = {
+          amount: req.body.amount,
+          currency: req.body.currency,
+          receipt: `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          payment_capture: 1,
+          notes: {
+              created_at: new Date().toISOString(),
+              source: 'frontend_app'
+          }
+      };
+
+      const response = await razorpay.orders.create(options);
+      console.log('Order created', response.id);
+      
       res.json({
           order_id: response.id,
           currency: response.currency,
           amount: response.amount,
-      })
+          receipt: response.receipt,
+          status: response.status,
+          created_at: response.created_at
+      });
+
   } catch (err) {
-     res.status(400).send('Not able to create order. Please try again!');
+      console.error('Order creation failed:', err.message);
+      res.status(400).json({
+          error: 'Not able to create order. Please try again!',
+          details: err.message
+      });
   }
 });
 router.post('/paymentCapture', (req, res) => {
