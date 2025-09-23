@@ -3,7 +3,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 
 const router = express.Router();
-app.post('/order', async (req, res) => {
+router.post('/order', async (req, res) => {
   // initializing razorpay
   const razorpay = new Razorpay({
       key_id: req.body.keyId,
