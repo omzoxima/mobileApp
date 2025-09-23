@@ -1,6 +1,7 @@
 import express from 'express';
 import Razorpay from 'razorpay';
 import crypto from 'crypto';
+import dotenv from 'dotenv';
 
 const router = express.Router();
 router.post('/order', async (req, res) => {
@@ -8,7 +9,7 @@ router.post('/order', async (req, res) => {
 
   try {
       // Validate required fields
-      if (!req.body.amount || !req.body.currency || !req.body.keyId || !req.body.keySecret) {
+      if (!req.body.amount || !req.body.currency) {
           return res.status(400).json({
               error: 'Missing required fields: amount, currency, keyId, keySecret',
               received: req.body
@@ -17,8 +18,8 @@ router.post('/order', async (req, res) => {
 
       // initializing razorpay
       const razorpay = new Razorpay({
-          key_id: req.body.keyId,
-          key_secret: req.body.keySecret,
+          key_id: process.env.RAZORPAY_KEY_ID,
+          key_secret: process.env.RAZORPAY_KEY_SECRET,
       });
 
       // setting up options for razorpay order.
@@ -26,11 +27,8 @@ router.post('/order', async (req, res) => {
           amount: req.body.amount,
           currency: req.body.currency,
           receipt: `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          payment_capture: 1,
-          notes: {
-              created_at: new Date().toISOString(),
-              source: 'frontend_app'
-          }
+          payment_capture: 1
+          
       };
 
       const response = await razorpay.orders.create(options);
