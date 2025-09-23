@@ -24,7 +24,7 @@ const storage = new Storage();
 const bucketName = "run-sources-tuktuki-464514-asia-south1";
 
 // API: /compress-image?file=path/to/file.jpg
-app.get("/compress-image", async (req, res) => {
+router.get("/compress-image", async (req, res) => {
   try {
     const filePath = req.query.file; 
     if (!filePath) return res.status(400).send("File path required");
