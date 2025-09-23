@@ -53,13 +53,19 @@ router.get("/compress-image", async (req, res) => {
     let optimizedBuffer;
     let targetContentType = originalContentType;
 
-    const image = sharp(data, { failOn: "none" }).withMetadata(); // keep metadata/orientation
+    const image = sharp(data, { failOn: "none" }); // strip metadata for smaller size
 
     if (originalContentType.includes("jpeg") || originalContentType.includes("jpg") ||
         lowerPath.endsWith(".jpg") || lowerPath.endsWith(".jpeg")) {
       // Near-lossless JPEG optimization: keep chroma detail, no resize
       optimizedBuffer = await image
-        .jpeg({ quality: 90, mozjpeg: true, progressive: true, chromaSubsampling: "4:4:4" })
+        .jpeg({
+          quality: 85,
+          mozjpeg: true,
+          progressive: true,
+          chromaSubsampling: "4:4:4",
+          optimizeCoding: true
+        })
         .toBuffer();
       targetContentType = "image/jpeg";
     } else if (originalContentType.includes("png") || lowerPath.endsWith(".png")) {
