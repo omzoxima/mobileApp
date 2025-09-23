@@ -2,7 +2,7 @@ import express from 'express';
 import models from '../models/index.js';
 import crypto from 'crypto';
 import { Storage } from '@google-cloud/storage';
-
+import sharp from "sharp";
 import { promisify } from 'util';
 import stream from 'stream';
 import { generateCdnSignedUrlForThumbnail,generateCdnSignedCookie } from '../services/cdnService.js';
@@ -17,8 +17,61 @@ import { apiCache } from '../config/redis.js';
 const { Series, Episode, Category,EpisodeBundlePrice } = models;
 const router = express.Router();
 
-// Common method to generate CDN signed URL for thumbnails
 
+
+
+const storage = new Storage();
+const bucketName = "run-sources-tuktuki-464514-asia-south1";
+
+// API: /compress-image?file=path/to/file.jpg
+app.get("/compress-image", async (req, res) => {
+  try {
+    const filePath = req.query.file; 
+    if (!filePath) return res.status(400).send("File path required");
+
+    const bucket = storage.bucket(bucketName);
+    const file = bucket.file(filePath);
+
+    // 1. File size before
+    const [metadataBefore] = await file.getMetadata();
+    const sizeBefore = metadataBefore.size;
+
+    // 2. Download file
+    const [data] = await file.download();
+
+    // 3. Compress with sharp
+    const quality = 75; // you can change this value
+    const compressedBuffer = await sharp(data)
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+
+    // 4. Overwrite file
+    await file.save(compressedBuffer, {
+      metadata: { contentType: "image/jpeg" }
+    });
+
+    // 5. File size after
+    const [metadataAfter] = await file.getMetadata();
+    const sizeAfter = metadataAfter.size;
+
+    // Logs
+    console.log(`✅ File compressed: ${filePath}`);
+    console.log(`   Size before: ${(sizeBefore / 1024).toFixed(2)} KB`);
+    console.log(`   Size after : ${(sizeAfter / 1024).toFixed(2)} KB`);
+    console.log(`   Quality    : ${quality}`);
+
+    res.send({
+      success: true,
+      file: filePath,
+      size_before_kb: (sizeBefore / 1024).toFixed(2),
+      size_after_kb: (sizeAfter / 1024).toFixed(2),
+      quality
+    });
+  } catch (err) {
+    console.error("❌ Compression error:", err);
+    res.status(500).send("Error compressing image");
+  }
+});
 
 
 router.post("/signedcookie", async (req, res) => {
