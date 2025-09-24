@@ -17,6 +17,7 @@ import Share from './share.js';
 import OTP from './otp.js';
 import AdReward from './adReward.js';
 import RazorpayEpisodeBundle from './razorpayEpisodeBundle.js';
+import RazorpayOrder from './razorpayOrder.js';
 
 const sequelize = new Sequelize(
   config.DB_NAME,
@@ -54,7 +55,8 @@ const models = {
   EpisodeUserAccess: EpisodeUserAccess(sequelize),
   OTP: OTP(sequelize),
   AdReward: AdReward(sequelize),
-  RazorpayEpisodeBundle: RazorpayEpisodeBundle(sequelize)
+  RazorpayEpisodeBundle: RazorpayEpisodeBundle(sequelize),
+  RazorpayOrder: RazorpayOrder(sequelize)
 };
 
 models.Category.hasMany(models.Series, { foreignKey: 'category_id' });
