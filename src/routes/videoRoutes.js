@@ -54,10 +54,11 @@ router.get("/convert-to-webp", async (req, res) => {
     // 2) Download file
     const [data] = await file.download();
 
-    // 3) Convert to WebP
     const webpBuffer = await sharp(data)
-      .webp({ quality: 80 }) // adjust quality as needed
-      .toBuffer();
+    .rotate() // orientation fix karega
+    .webp({ quality: 80 })
+    .toBuffer();
+  
 
     // 4) Save as new file (replace .jpg/.jpeg with .webp)
     const newFilePath = filePath.replace(/\.(jpg|jpeg)$/i, ".webp");
