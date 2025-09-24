@@ -139,6 +139,15 @@ router.post("/verify-payment", async (req, res) => {
       .update(body)
       .digest("hex");
 
+    // Debug: log signature comparison details
+    console.log("🔎 Signature verification:", {
+      razorpay_order_id,
+      razorpay_payment_id,
+      provided_signature: razorpay_signature,
+      expected_signature: expectedSignature,
+      verified: expectedSignature === razorpay_signature
+    });
+
     if (expectedSignature !== razorpay_signature) {
       console.log("❌ Payment Verification Failed!");
       return res.status(400).json({ success: false, message: "Invalid signature" });
@@ -165,20 +174,28 @@ router.post("/verify-payment", async (req, res) => {
       return res.status(404).json({ error: "Bundle not found for order" });
     }
 
-  
+    // Debug: log bundle info resolved from order
+    console.log("📦 Bundle resolved:", {
+      bundle_id: bundle.id,
+      bundle_name: bundle.name,
+      bundle_type: bundle.type,
+      bundle_points: bundle.points
+    });
+
+    // Define pointsToCredit once to use across branches and in transaction record
+    let pointsToCredit = Number(bundle.points || 0);
 
     if (bundle.type === 'monthly') {
       const now = new Date();
       const currentEnd = user.end_date ? new Date(user.end_date) : null;
       const base = currentEnd && currentEnd > now ? currentEnd : now;
       const end = new Date(base);
-      const months = Math.max(pointsToCredit, 0);
+      const months = Math.max(Number.isFinite(pointsToCredit) ? pointsToCredit : 0, 0);
       end.setMonth(end.getMonth() + months);
       if (!user.start_date) user.start_date = now;
       user.end_date = end;
     }
     else{
-        const pointsToCredit = Number(bundle.points || 0);
         const newBalance = Number(user.current_reward_balance || 0) + (Number.isFinite(pointsToCredit) ? pointsToCredit : 0);
         user.current_reward_balance = newBalance;
     }
