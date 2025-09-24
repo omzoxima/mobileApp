@@ -206,7 +206,7 @@ router.post("/verify-payment", async (req, res) => {
       user_id: user.id,
       type: 'payment_earn',
       points: pointsToCredit,
-      episode_bundle_id: orderRecord.bundle_id,
+     // episode_bundle_id: orderRecord.bundle_id,
       product_id: bundle.plan_id || bundle.id,
       transaction_id: razorpay_payment_id,
       receipt: razorpay_order_id,
