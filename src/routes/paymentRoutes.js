@@ -80,7 +80,7 @@ router.post("/order", async (req, res) => {
 
     // 5) Create order in Razorpay (currency fixed to INR)
     const options = {
-      amount: 9990, // already in paise
+      amount: 9900, // already in paise
       currency: "INR",
       receipt: `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       payment_capture: 1,
