@@ -22,6 +22,72 @@ const router = express.Router();
 
 const storage = new Storage();
 const bucketName = "run-sources-tuktuki-464514-asia-south1";
+router.get("/convert-to-webp", async (req, res) => {
+  try {
+    const filePath = (req.query.file || "").toString().trim();
+    if (!filePath) return res.status(400).send("File path required");
+
+    // Safety validations
+    if (filePath.includes("..") || filePath.startsWith("/")) {
+      return res.status(400).send("Invalid file path");
+    }
+    if (!filePath.startsWith("thumbnails/")) {
+      return res.status(400).send("Only thumbnails can be converted");
+    }
+
+    const bucket = storage.bucket(bucketName);
+    const file = bucket.file(filePath);
+
+    // 1) Metadata (before conversion)
+    const [metadataBefore] = await file.getMetadata();
+    const sizeBefore = Number(metadataBefore.size || 0);
+    const originalContentType = metadataBefore.contentType || "application/octet-stream";
+
+    if (
+      !originalContentType.includes("jpeg") &&
+      !originalContentType.includes("jpg") &&
+      !(filePath.toLowerCase().endsWith(".jpg") || filePath.toLowerCase().endsWith(".jpeg"))
+    ) {
+      return res.status(400).send("Only JPG/JPEG files can be converted to WebP");
+    }
+
+    // 2) Download file
+    const [data] = await file.download();
+
+    // 3) Convert to WebP
+    const webpBuffer = await sharp(data)
+      .webp({ quality: 80 }) // adjust quality as needed
+      .toBuffer();
+
+    // 4) Save as new file (replace .jpg/.jpeg with .webp)
+    const newFilePath = filePath.replace(/\.(jpg|jpeg)$/i, ".webp");
+    const newFile = bucket.file(newFilePath);
+
+    await newFile.save(webpBuffer, {
+      metadata: { contentType: "image/webp" },
+    });
+
+    // 5) Metadata after conversion
+    const [metadataAfter] = await newFile.getMetadata();
+    const sizeAfter = Number(metadataAfter.size || 0);
+
+    // Logs
+    console.log(`✅ Converted to WebP: ${filePath} -> ${newFilePath}`);
+    console.log(`   Size before : ${(sizeBefore / 1024).toFixed(2)} KB`);
+    console.log(`   Size after  : ${(sizeAfter / 1024).toFixed(2)} KB`);
+
+    res.json({
+      success: true,
+      original_file: filePath,
+      converted_file: newFilePath,
+      size_before_kb: (sizeBefore / 1024).toFixed(2),
+      size_after_kb: (sizeAfter / 1024).toFixed(2),
+    });
+  } catch (err) {
+    console.error("❌ WebP Conversion Error:", err);
+    res.status(500).send("Error converting image to WebP");
+  }
+});
 
 // API: /compress-image?file=thumbnails/path/to/file.jpg
 router.get("/compress-image", async (req, res) => {
