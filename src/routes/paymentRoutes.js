@@ -219,9 +219,11 @@ router.post("/verify-payment", async (req, res) => {
       .update(id + "|" + razorpay_payment_id)
       .digest("hex");
 
-    // Debug: log signature comparison details
+    // Debug: log signature comparison details̱
     console.log("🔎 Signature verification:", {
       razorpay_order_id,
+      razorpay_subscription_id,
+      id,
       razorpay_payment_id,
       provided_signature: razorpay_signature,
       expected_signature: generatedSignature,
