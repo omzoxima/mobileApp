@@ -239,7 +239,7 @@ router.post("/verify-payment", async (req, res) => {
     let orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_order_id } });
     
     // If not found as order, check if it's a subscription
-    if (!orderRecord && razorpay_subscription_id.startsWith('sub_')) {
+    if (!orderRecord) {
       console.log("📋 Checking for subscription record:", razorpay_subscription_id);
       orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_subscription_id } });
     }
