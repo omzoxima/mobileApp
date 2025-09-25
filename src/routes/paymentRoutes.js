@@ -197,17 +197,26 @@ router.post("/order", async (req, res) => {
  */
 router.post("/verify-payment", async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature,razorpay_subscription_id } = req.body;
     const deviceId = req.header("x-device-id") || req.header("x-Device-Id") || req.header("x-Device-ID");
 
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    if ((!razorpay_order_id && !razorpay_subscription_id) || !razorpay_payment_id || !razorpay_signature) {
       return res.status(400).json({ error: "Missing required fields" });
     }
-
-    const body = `${razorpay_order_id}|${razorpay_payment_id}`;
-    const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
-      .update(body)
+    let keySecret = process.env.RAZORPAY_KEY_SECRET;
+    let id = "";
+    if (razorpay_order_id && razorpay_order_id.startsWith("order_")) {
+      id = razorpay_order_id;
+    } else if (razorpay_subscription_id && razorpay_subscription_id.startsWith("sub_")) {
+      id = razorpay_subscription_id;
+    } else {
+      throw new Error("Invalid Razorpay ID: must be order_... or sub_...");
+    }
+  
+    // Generate expected signature
+    const generatedSignature = crypto
+      .createHmac("sha256", keySecret)
+      .update(id + "|" + razorpay_payment_id)
       .digest("hex");
 
     // Debug: log signature comparison details
