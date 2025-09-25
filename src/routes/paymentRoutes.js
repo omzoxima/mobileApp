@@ -116,20 +116,42 @@ router.post("/order", async (req, res) => {
       return res.status(400).json({ error: "Missing required field: razorpay_episode_bundle_id" });
     }
 
-    // 4) Fetch bundle and price
-    const bundle = await models.RazorpayEpisodeBundle.findByPk(bundleId);
+    // 4) Get platform header
+    const platform = req.header("platform") || req.header("Platform") || "android";
+
+    // 5) Fetch bundle and price
+    const bundle = await models.EpisodeBundlePrice.findByPk(bundleId);
     if (!bundle) {
       return res.status(404).json({ error: "Bundle not found" });
     }
 
-    const amountPaise = Number(bundle.price);
+    // 6) Calculate price based on platform
+    let amountPaise;
+    if (platform.toLowerCase() === 'ios') {
+      // For iOS, use appleprice and multiply by 100 (convert to paise)
+      amountPaise = Number(bundle.appleprice) * 100;
+      console.log("🍎 iOS Price Calculation:", {
+        appleprice: bundle.appleprice,
+        amountPaise: amountPaise,
+        platform: platform
+      });
+    } else {
+      // For Android, use price_points and multiply by 100 (convert to paise)
+      amountPaise = Number(bundle.price_points) * 100;
+      console.log("🤖 Android Price Calculation:", {
+        price_points: bundle.price_points,
+        amountPaise: amountPaise,
+        platform: platform
+      });
+    }
+
     if (!Number.isFinite(amountPaise) || amountPaise <= 0) {
       return res.status(400).json({ error: "Invalid bundle price" });
     }
 
-    // 5) Create order in Razorpay (currency fixed to INR)
+    // 7) Create order in Razorpay (currency fixed to INR)
     const options = {
-      amount: amountPaise*100, // already in paise
+      amount: amountPaise, // already in paise
       currency: "INR",
       receipt: `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       payment_capture: 1,
@@ -237,26 +259,16 @@ router.post("/verify-payment", async (req, res) => {
     // Fetch bundle and credit (only for orders, not subscriptions)
     let bundle = null;
     if (orderRecord.bundle_id) {
-      bundle = await models.RazorpayEpisodeBundle.findByPk(orderRecord.bundle_id);
+      bundle = await models.EpisodeBundlePrice.findByPk(orderRecord.bundle_id);
       if (!bundle) {
         return res.status(404).json({ error: "Bundle not found for order" });
       }
     }
 
-    // Debug: log bundle info resolved from order
-    if (bundle) {
-      console.log("📦 Bundle resolved:", {
-        bundle_id: bundle.id,
-        bundle_name: bundle.name,
-        bundle_type: bundle.type,
-        bundle_points: bundle.points
-      });
-    } else {
-      console.log("📦 Subscription payment - no bundle required");
-    }
+   
 
     // Define pointsToCredit once to use across branches and in transaction record
-    let pointsToCredit = bundle ? Number(bundle.points || 0) : 0;
+    let pointsToCredit = bundle ? Number(bundle.bundle_count || 0) : 0;
 
     if (bundle && bundle.productName && bundle.productName.toLowerCase().includes('package')) {
       const now = new Date();
@@ -283,7 +295,7 @@ router.post("/verify-payment", async (req, res) => {
         type: 'payment_earn',
         points: pointsToCredit,
         episode_bundle_id: orderRecord.bundle_id,
-        product_id: bundle ? (bundle.plan_id || bundle.id) : orderRecord.subscription_id,
+        product_id: bundle ? (bundle.plan_id || bundle.id) : orderRecord.order_id,
         transaction_id: razorpay_payment_id,
         receipt: razorpay_order_id,
         source: 'razorpay'
