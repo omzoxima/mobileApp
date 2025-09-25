@@ -205,9 +205,9 @@ router.post("/verify-payment", async (req, res) => {
     }
     let keySecret = process.env.RAZORPAY_KEY_SECRET;
     let id = "";
-    if (razorpay_order_id && razorpay_order_id.startsWith("order_")) {
+    if (razorpay_order_id) {
       id = razorpay_order_id;
-    } else if (razorpay_subscription_id && razorpay_subscription_id.startsWith("sub_")) {
+    } else if (razorpay_subscription_id ) {
       id = razorpay_subscription_id;
     } else {
       throw new Error("Invalid Razorpay ID: must be order_... or sub_...");
