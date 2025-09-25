@@ -1001,11 +1001,35 @@ async function refreshAllUrlCaches() {
 }
 router.get('/razorpay-episode-bundles', async (req, res) => {
   try {
-    const bundles = await models.RazorpayEpisodeBundle.findAll({
-      attributes: ['id', 'plan_id', 'price', 'name'],
-      order: [['updated_at', 'DESC']]
+    const { platform } = req.query; // Get platform from query params
+    
+    const bundles = await EpisodeBundlePrice.findAll({ 
+      order: [['updated_at', 'DESC']] 
     });
-    res.json(bundles);
+    
+    let responseData;
+    
+    // If iOS platform is requested, use plan_id_ios, otherwise use plan_id
+    if (platform === 'ios') {
+      responseData = bundles.map(bundle => {
+        const bundleData = bundle.toJSON();
+        // Use plan_id_ios for iOS, fallback to plan_id if not available
+        bundleData.plan_id = bundleData.plan_id_ios || bundleData.plan_id;
+        // Remove plan_id_ios from response
+        delete bundleData.plan_id_ios;
+        return bundleData;
+      });
+    } else {
+      // For Android or any other platform, return existing response
+      responseData = bundles.map(bundle => {
+        const bundleData = bundle.toJSON();
+        // Remove plan_id_ios from response for Android
+        delete bundleData.plan_id_ios;
+        return bundleData;
+      });
+    }
+    
+    res.json(responseData);
   } catch (error) {
     console.error('Bundle API error:', error);
     res.status(500).json({ error: error.message });

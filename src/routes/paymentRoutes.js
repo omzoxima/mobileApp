@@ -20,17 +20,66 @@ const razorpay = new Razorpay({
  */
 router.post("/subscription", async (req, res) => {
   try {
-    const { planId, totalCount, customerNotify } = req.body;
+    // 1) Validate device-id header
+    const deviceId = req.header("x-device-id") || req.header("x-Device-Id") || req.header("x-Device-ID");
+    if (!deviceId) {
+      return res.status(400).json({ error: "Missing required header: device-id" });
+    }
 
-    if (!planId) {
-      return res.status(400).json({ error: "Missing required field: planId" });
+    // 2) Verify user exists with this device
+    const user = await models.User.findOne({ where: { device_id: deviceId, is_active: true } });
+    if (!user) {
+      return res.status(404).json({ error: "User not found for provided device-id" });
+    }
+
+    const { planId, totalCount, customerNotify, bundle_id } = req.body;
+    const platform = req.header("platform") || req.header("Platform") || "android";
+
+    if (!planId && !bundle_id) {
+      return res.status(400).json({ error: "Missing required field: planId or bundle_id" });
+    }
+
+    let finalPlanId = planId;
+    let bundle = null;
+
+    // If bundle_id is provided, get price and plan_id from bundle
+    if (bundle_id) {
+      bundle = await models.EpisodeBundlePrice.findByPk(bundle_id);
+      if (!bundle) {
+        return res.status(404).json({ error: "Bundle not found" });
+      }
+
+      // Get plan_id based on platform
+      if (platform.toLowerCase() === 'ios') {
+        finalPlanId = bundle.plan_id_ios || bundle.plan_id;
+      } else {
+        finalPlanId = bundle.plan_id;
+      }
+
+      if (!finalPlanId) {
+        return res.status(400).json({ error: "Plan ID not found for this bundle" });
+      }
     }
 
     const subscription = await razorpay.subscriptions.create({
-      plan_id: planId,
+      plan_id: finalPlanId,
       total_count: totalCount ?? 12, // default 12 cycles
       customer_notify: customerNotify ?? 1,
     });
+
+    // 3) Create RazorpayOrder record with subscription_id in order column
+    try {
+      await models.RazorpayOrder.create({
+        order_id: subscription.id, // subscription ID goes in order_id column
+        bundle_id: bundle ? bundle.id : null, // Bundle ID if provided
+        user_id: user.id,
+        subscription_id: subscription.id // Add subscription_id field if exists
+      });
+      console.log("✅ Subscription order record created:", subscription.id);
+    } catch (e) {
+      console.error('Failed to persist subscription order:', e.message);
+      // Continue - not fatal for subscription creation
+    }
 
     res.json(subscription);
   } catch (err) {
@@ -80,7 +129,7 @@ router.post("/order", async (req, res) => {
 
     // 5) Create order in Razorpay (currency fixed to INR)
     const options = {
-      amount: 9900, // already in paise
+      amount: amountPaise*100, // already in paise
       currency: "INR",
       receipt: `receipt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       payment_capture: 1,
@@ -153,11 +202,28 @@ router.post("/verify-payment", async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid signature" });
     }
 
-    // Signature valid → find order
-    const orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_order_id } });
-    if (!orderRecord) {
-      return res.status(200).json({ success: true, warning: true, message: 'Signature verified but order_id not found in database' });
+    // Signature valid → find order or subscription
+    console.log("🔍 Searching for order/subscription in database:", razorpay_order_id);
+    
+    let orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_order_id } });
+    
+    // If not found as order, check if it's a subscription
+    if (!orderRecord && razorpay_order_id.startsWith('sub_')) {
+      console.log("📋 Checking for subscription record:", razorpay_order_id);
+      orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_order_id } });
     }
+    
+    if (!orderRecord) {
+      console.log("❌ Order/Subscription not found in database for:", razorpay_order_id);
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Order/Subscription not found in database',
+        order_id: razorpay_order_id,
+        message: 'This order/subscription was not created through our system'
+      });
+    }
+    
+    console.log("✅ Order/Subscription record found:", orderRecord.id);
 
     // Find user (prefer record mapping; device header is ancillary)
     const user = await models.User.findByPk(orderRecord.user_id);
@@ -168,24 +234,31 @@ router.post("/verify-payment", async (req, res) => {
       console.warn('Device mismatch for verified payment');
     }
 
-    // Fetch bundle and credit
-    const bundle = await models.RazorpayEpisodeBundle.findByPk(orderRecord.bundle_id);
-    if (!bundle) {
-      return res.status(404).json({ error: "Bundle not found for order" });
+    // Fetch bundle and credit (only for orders, not subscriptions)
+    let bundle = null;
+    if (orderRecord.bundle_id) {
+      bundle = await models.RazorpayEpisodeBundle.findByPk(orderRecord.bundle_id);
+      if (!bundle) {
+        return res.status(404).json({ error: "Bundle not found for order" });
+      }
     }
 
     // Debug: log bundle info resolved from order
-    console.log("📦 Bundle resolved:", {
-      bundle_id: bundle.id,
-      bundle_name: bundle.name,
-      bundle_type: bundle.type,
-      bundle_points: bundle.points
-    });
+    if (bundle) {
+      console.log("📦 Bundle resolved:", {
+        bundle_id: bundle.id,
+        bundle_name: bundle.name,
+        bundle_type: bundle.type,
+        bundle_points: bundle.points
+      });
+    } else {
+      console.log("📦 Subscription payment - no bundle required");
+    }
 
     // Define pointsToCredit once to use across branches and in transaction record
-    let pointsToCredit = Number(bundle.points || 0);
+    let pointsToCredit = bundle ? Number(bundle.points || 0) : 0;
 
-    if (bundle.type === 'monthly') {
+    if (bundle && bundle.productName && bundle.productName.toLowerCase().includes('package')) {
       const now = new Date();
       const currentEnd = user.end_date ? new Date(user.end_date) : null;
       const base = currentEnd && currentEnd > now ? currentEnd : now;
@@ -195,23 +268,27 @@ router.post("/verify-payment", async (req, res) => {
       if (!user.start_date) user.start_date = now;
       user.end_date = end;
     }
-    else{
+    else if (bundle) {
         const newBalance = Number(user.current_reward_balance || 0) + (Number.isFinite(pointsToCredit) ? pointsToCredit : 0);
         user.current_reward_balance = newBalance;
     }
+    // For subscription payments without bundle, no points are credited
 
     await user.save();
 
-    await models.RewardTransaction.create({
-      user_id: user.id,
-      type: 'payment_earn',
-      points: pointsToCredit,
-     // episode_bundle_id: orderRecord.bundle_id,
-      product_id: bundle.plan_id || bundle.id,
-      transaction_id: razorpay_payment_id,
-      receipt: razorpay_order_id,
-      source: 'razorpay'
-    });
+    // Only create reward transaction if there are points to credit
+    if (pointsToCredit > 0) {
+      await models.RewardTransaction.create({
+        user_id: user.id,
+        type: 'payment_earn',
+        points: pointsToCredit,
+        episode_bundle_id: orderRecord.bundle_id,
+        product_id: bundle ? (bundle.plan_id || bundle.id) : orderRecord.subscription_id,
+        transaction_id: razorpay_payment_id,
+        receipt: razorpay_order_id,
+        source: 'razorpay'
+      });
+    }
 
     console.log("✅ Payment Verified & Rewards Credited");
     return res.json({
@@ -223,7 +300,16 @@ router.post("/verify-payment", async (req, res) => {
         start_date: user.start_date,
         end_date: user.end_date
       },
-      bundle: { id: bundle.id, plan_id: bundle.plan_id, type: bundle.type, points: bundle.points }
+      bundle: bundle ? { 
+        id: bundle.id, 
+        plan_id: bundle.plan_id, 
+        type: bundle.type, 
+        points: bundle.points 
+      } : null,
+      subscription: orderRecord.subscription_id ? {
+        id: orderRecord.subscription_id,
+        type: 'subscription'
+      } : null
     });
   } catch (err) {
     console.error("Payment verification failed:", err.message);

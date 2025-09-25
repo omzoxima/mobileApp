@@ -9,8 +9,11 @@ export default (sequelize) => {
     },
     plan_id: {
       type: DataTypes.STRING(128),
-      allowNull: true,
-      unique: true
+      allowNull: true
+    },
+    plan_id_ios: {
+      type: DataTypes.STRING(128),
+      allowNull: true
     },
     name: {
       type: DataTypes.STRING(128),
@@ -42,7 +45,8 @@ export default (sequelize) => {
     tableName: 'razorpay_episode_bundles',
     timestamps: false,
     indexes: [
-      { unique: true, fields: ['plan_id'] },
+      { fields: ['plan_id'] },
+      { fields: ['plan_id_ios'] },
       { fields: ['type'] },
       { fields: ['price'] }
     ]

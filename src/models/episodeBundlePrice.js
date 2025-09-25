@@ -36,6 +36,14 @@ export default (sequelize) => {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
     },
+    plan_id: {
+      type: DataTypes.STRING(128),
+      allowNull: true
+    },
+    plan_id_ios: {
+      type: DataTypes.STRING(128),
+      allowNull: true
+    },
     updated_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
