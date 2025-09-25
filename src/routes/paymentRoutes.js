@@ -224,11 +224,11 @@ router.post("/verify-payment", async (req, res) => {
       razorpay_order_id,
       razorpay_payment_id,
       provided_signature: razorpay_signature,
-      expected_signature: expectedSignature,
-      verified: expectedSignature === razorpay_signature
+      expected_signature: generatedSignature,
+      verified: generatedSignature === razorpay_signature
     });
 
-    if (expectedSignature !== razorpay_signature) {
+    if (generatedSignature !== razorpay_signature) {
       console.log("❌ Payment Verification Failed!");
       return res.status(400).json({ success: false, message: "Invalid signature" });
     }
@@ -239,9 +239,9 @@ router.post("/verify-payment", async (req, res) => {
     let orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_order_id } });
     
     // If not found as order, check if it's a subscription
-    if (!orderRecord && razorpay_order_id.startsWith('sub_')) {
-      console.log("📋 Checking for subscription record:", razorpay_order_id);
-      orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_order_id } });
+    if (!orderRecord && razorpay_subscription_id.startsWith('sub_')) {
+      console.log("📋 Checking for subscription record:", razorpay_subscription_id);
+      orderRecord = await models.RazorpayOrder.findOne({ where: { order_id: razorpay_subscription_id } });
     }
     
     if (!orderRecord) {
