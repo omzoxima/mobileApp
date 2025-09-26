@@ -885,5 +885,97 @@ router.get('/series-by-category/:categoryId', async (req, res) => {
   }
 });
 
+/**
+ * ==========================
+ * 🔹 Carousel Series v1
+ * ==========================
+ */
+router.get('/carousel-series/v1', async (req, res) => {
+  try {
+    const { limit = 5 } = req.query;
+    
+    const carouselSeries = await models.Series.findAll({
+      where: { 
+        is_popular: true,
+        status: 'Active',
+        is_published: true
+      },
+      attributes: [
+        'id', 
+        'title', 
+        'carousel_image_url',
+        'category_id',
+        'created_at',
+        'updated_at'
+      ],
+      order: [['created_at', 'DESC']],
+      limit: parseInt(limit)
+    });
+
+    // Generate CDN signed URLs for carousel images
+    const seriesWithSignedUrls = await Promise.all(
+      carouselSeries.map(async (series) => {
+        const seriesData = series.toJSON();
+        
+        // Generate CDN signed URL for carousel image
+        if (seriesData.carousel_image_url) {
+          try {
+            const signedUrl = await generateCdnSignedUrlForThumbnail(seriesData.carousel_image_url);
+            seriesData.carousel_image_url = signedUrl;
+          } catch (error) {
+            console.error('Error generating signed URL for series:', seriesData.id, error);
+            // Keep original URL if signing fails
+          }
+        }
+        
+        return seriesData;
+      })
+    );
+
+    res.json({
+      success: true,
+      data: seriesWithSignedUrls,
+      count: seriesWithSignedUrls.length
+    });
+  } catch (error) {
+    console.error('Carousel series error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message || 'Failed to fetch carousel series' 
+    });
+  }
+});
+
+/**
+ * ==========================
+ * 🔹 Categories v1
+ * ==========================
+ */
+router.get('/category/v1', async (req, res) => {
+  try {
+    const categories = await models.Category.findAll({
+      attributes: ['id', 'name'],
+      order: [['name', 'ASC']]
+    });
+
+    // Extract category IDs like in carousel-series
+    const categoryIds = categories.map(category => category.id);
+
+    res.json({
+      success: true,
+      data: categories,
+      count: categories.length,
+      category_ids: categoryIds
+    });
+  } catch (error) {
+    console.error('Categories error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message || 'Failed to fetch categories' 
+    });
+  }
+});
+
+
 
 export default router; 
