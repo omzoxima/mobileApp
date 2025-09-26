@@ -890,7 +890,7 @@ router.get('/series-by-category/:categoryId', async (req, res) => {
  * 🔹 Carousel Series v1
  * ==========================
  */
-router.get('/carousel-series/v1', async (req, res) => {
+router.get('/v1/carousel-series', async (req, res) => {
   try {
     const { limit = 5 } = req.query;
     
@@ -951,7 +951,7 @@ router.get('/carousel-series/v1', async (req, res) => {
  * 🔹 Categories v1
  * ==========================
  */
-router.get('/category/v1', async (req, res) => {
+router.get('/v1/category', async (req, res) => {
   try {
     const categories = await models.Category.findAll({
       attributes: ['id', 'name'],
