@@ -253,6 +253,18 @@ router.post("/verify-payment", async (req, res) => {
 
     console.log("✅ Order/Subscription record found:", orderRecord.id);
 
+    // Check if payment is already processed
+    if (orderRecord.status === 'paid') {
+      console.log("⚠️ Payment already processed for order:", orderRecord.id);
+      return res.status(200).json({
+        success: true,
+        message: 'Payment already processed',
+        warning: 'Duplicate payment verification attempt',
+        order_id: idForDB,
+        status: 'paid'
+      });
+    }
+
     const user = await models.User.findByPk(orderRecord.user_id);
     if (!user) {
       return res.status(404).json({ error: "User not found for order" });
@@ -302,6 +314,11 @@ router.post("/verify-payment", async (req, res) => {
       }
     }
 
+    // Update order status to 'paid'
+    orderRecord.status = 'paid';
+    await orderRecord.save();
+    console.log("✅ Order status updated to 'paid'");
+
     console.log("✅ Payment Verified & Rewards Credited (if applicable)");
 
     return res.json({
@@ -339,7 +356,7 @@ router.post("/verify-payment", async (req, res) => {
 router.post(
   "/webhook",
   express.json({ type: "application/json" }),
-  (req, res) => {
+  async (req, res) => {
     try {
       const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
 
@@ -357,6 +374,67 @@ router.post(
       switch (event) {
         case "payment.captured":
           console.log("✅ Payment Captured:", req.body.payload.payment.entity);
+          
+          // Handle unpaid orders
+          const payment = req.body.payload.payment.entity;
+          const order_id = payment.order_id;
+          
+          if (order_id) {
+            const orderRecord = await models.RazorpayOrder.findOne({ 
+              where: { order_id: order_id } 
+            });
+            
+            if (orderRecord && orderRecord.status === 'unpaid') {
+              console.log("🔄 Processing unpaid order from webhook:", order_id);
+              
+              try {
+                const user = await models.User.findByPk(orderRecord.user_id);
+                if (user && orderRecord.bundle_id) {
+                  const bundle = await models.EpisodeBundlePrice.findByPk(orderRecord.bundle_id);
+                  
+                  if (bundle) {
+                    const pointsToCredit = Number(bundle.bundle_count || 0);
+                    
+                    if (bundle.productName && bundle.productName.toLowerCase().includes("package")) {
+                      const now = new Date();
+                      const currentEnd = user.end_date ? new Date(user.end_date) : null;
+                      const base = currentEnd && currentEnd > now ? currentEnd : now;
+                      const end = new Date(base);
+                      const months = Math.max(pointsToCredit, 0);
+                      end.setMonth(end.getMonth() + months);
+                      if (!user.start_date) user.start_date = now;
+                      user.end_date = end;
+                    } else {
+                      user.current_reward_balance = Number(user.current_reward_balance || 0) + pointsToCredit;
+                    }
+                    await user.save();
+                    
+                    if (pointsToCredit > 0) {
+                      await models.RewardTransaction.create({
+                        user_id: user.id,
+                        type: "payment_earn",
+                        points: pointsToCredit,
+                        episode_bundle_id: orderRecord.bundle_id,
+                        product_id: bundle.plan_id || bundle.id,
+                        transaction_id: payment.id,
+                        receipt: order_id,
+                        source: "razorpay_webhook"
+                      });
+                    }
+                    
+                    // Update status to paid
+                    orderRecord.status = 'paid';
+                    await orderRecord.save();
+                    console.log("✅ Webhook processed unpaid order successfully");
+                  }
+                }
+              } catch (error) {
+                console.error("❌ Error processing unpaid order in webhook:", error);
+              }
+            } else if (orderRecord && orderRecord.status === 'paid') {
+              console.log("⚠️ Order already paid, skipping webhook processing");
+            }
+          }
           break;
 
         case "payment.failed":

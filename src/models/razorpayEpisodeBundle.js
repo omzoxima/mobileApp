@@ -11,10 +11,6 @@ export default (sequelize) => {
       type: DataTypes.STRING(128),
       allowNull: true
     },
-    plan_id_ios: {
-      type: DataTypes.STRING(128),
-      allowNull: true
-    },
     name: {
       type: DataTypes.STRING(128),
       allowNull: true

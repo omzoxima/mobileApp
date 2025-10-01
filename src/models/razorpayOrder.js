@@ -20,6 +20,11 @@ export default (sequelize) => {
       type: DataTypes.UUID,
       allowNull: false
     },
+    status: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: 'unpaid'
+    },
     created_at: {
       type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
@@ -30,7 +35,8 @@ export default (sequelize) => {
     indexes: [
       { unique: true, fields: ['order_id'] },
       { fields: ['bundle_id'] },
-      { fields: ['user_id'] }
+      { fields: ['user_id'] },
+      { fields: ['status'] }
     ]
   });
 
