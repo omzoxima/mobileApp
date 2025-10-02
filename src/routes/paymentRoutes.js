@@ -129,9 +129,9 @@ router.post("/order", async (req, res) => {
     let amountPaise;
     if (platform.toLowerCase() === 'ios') {
       // For iOS, use appleprice and multiply by 100 (convert to paise)
-      amountPaise = Number(bundle.appleprice) * 100;
+      amountPaise = Number(bundle.price_points) * 100;
       console.log("🍎 iOS Price Calculation:", {
-        appleprice: bundle.appleprice,
+        appleprice: bundle.price_points,
         amountPaise: amountPaise,
         platform: platform
       });
